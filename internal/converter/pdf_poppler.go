@@ -242,9 +242,11 @@ type FontInfo struct {
 var fontSubsetPrefix = regexp.MustCompile(`^[A-Z]{6}\+`)
 
 var monospaceFontNames = []string{
-	"mono", "courier", "consolas", "menlo", "monaco", "firacode", "fira code",
-	"sourcecode", "source code", "inconsolata", "jetbrains", "dejavusansmono",
-	"liberationsansmono", "lucideconsole", "typewriter", "fixed",
+	"mono", "courier", "consolas", "menlo", "monaco", "firacode", "fira code", "fira-code",
+	"sourcecode", "source code", "source-code", "inconsolata", "jetbrains", "dejavusansmono",
+	"liberationsansmono", "lucidaconsole", "lucida console", "lucida-console",
+	"lucideconsole", "typewriter", "fixed", "ubuntu mono", "sf mono", "roboto mono",
+	"cascadia code", "cascadia-code",
 }
 
 var boldFontTokens = []string{

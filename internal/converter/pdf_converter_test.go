@@ -753,6 +753,76 @@ func TestMergeCrossPageParagraphs(t *testing.T) {
 	}
 }
 
+func TestMergeCrossPageCodeBlocks(t *testing.T) {
+	blocks := []ParsedBlock{
+		{
+			Kind:    BlockCode,
+			PageNum: 169,
+			XHTML:   "<pre><code>public class AndSpecification {\n   one = x;</code></pre>",
+		},
+		{
+			Kind:    BlockCode,
+			PageNum: 170,
+			XHTML:   "<pre><code>   other = y;\n}</code></pre>",
+		},
+	}
+
+	merged := mergeCrossPageParagraphs(blocks, nil)
+	if len(merged) != 1 {
+		t.Fatalf("expected 1 merged code block across pages, got %d", len(merged))
+	}
+	expected := "<pre><code>public class AndSpecification {\n   one = x;\n<span id=\"p170\"></span>   other = y;\n}</code></pre>"
+	if merged[0].XHTML != expected {
+		t.Errorf("expected merged XHTML:\n%s\ngot:\n%s", expected, merged[0].XHTML)
+	}
+}
+
+func TestCodeBlockIndentation(t *testing.T) {
+	codeLines := []VisualLine{
+		{
+			PlainText:   "public abstract class AbstractSpecification {",
+			Left:        124.0,
+			Top:         100.0,
+			FontSize:    11.0,
+			IsMonospace: true,
+		},
+		{
+			PlainText:   "   public Specification and() {",
+			Left:        124.0,
+			Top:         113.0,
+			FontSize:    11.0,
+			IsMonospace: true,
+		},
+		{
+			PlainText:   "      return new AndSpecification();",
+			Left:        124.0,
+			Top:         126.0,
+			FontSize:    11.0,
+			IsMonospace: true,
+		},
+		{
+			PlainText:   "   }",
+			Left:        124.0,
+			Top:         139.0,
+			FontSize:    11.0,
+			IsMonospace: true,
+		},
+	}
+
+	rendered := renderCodeBlock(codeLines)
+	expectedLines := []string{
+		"<pre><code>public abstract class AbstractSpecification {",
+		"   public Specification and() {",
+		"      return new AndSpecification();",
+		"   }</code></pre>",
+	}
+	for _, exp := range expectedLines {
+		if !strings.Contains(rendered, exp) {
+			t.Errorf("expected rendered code block to contain %q, but got:\n%s", exp, rendered)
+		}
+	}
+}
+
 func TestDropCapNoInitialFalsePositive(t *testing.T) {
 	// A single-line byline with large initials like "J. K. Rowling" must NOT be wrapped in <span class="dropcap">
 	lines := []VisualLine{

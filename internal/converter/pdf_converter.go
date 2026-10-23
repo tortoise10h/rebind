@@ -386,6 +386,30 @@ func mergeCrossPageParagraphs(blocks []ParsedBlock, lex *DocumentLexicon) []Pars
 			}
 		}
 
+		if prev.Kind == BlockCode && curr.Kind == BlockCode && curr.PageNum == getLastPageNum(*prev)+1 {
+			prevInner := prev.XHTML
+			if strings.HasPrefix(prevInner, "<pre><code>") {
+				prevInner = prevInner[len("<pre><code>"):]
+			}
+			if strings.HasSuffix(prevInner, "</code></pre>") {
+				prevInner = prevInner[:len(prevInner)-len("</code></pre>")]
+			}
+			prevInner = strings.TrimRight(prevInner, "\r\n")
+
+			currInner := curr.XHTML
+			if strings.HasPrefix(currInner, "<pre><code>") {
+				currInner = currInner[len("<pre><code>"):]
+			}
+			if strings.HasSuffix(currInner, "</code></pre>") {
+				currInner = currInner[:len(currInner)-len("</code></pre>")]
+			}
+			currInner = strings.TrimLeft(currInner, "\r\n")
+
+			prev.XHTML = fmt.Sprintf("<pre><code>%s\n<span id=\"p%d\"></span>%s</code></pre>",
+				prevInner, curr.PageNum, currInner)
+			continue
+		}
+
 		res = append(res, curr)
 	}
 

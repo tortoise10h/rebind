@@ -77,6 +77,7 @@ var codeSyntaxTokens = []string{
 	"func ", "package ", "import ", "def ", "class ", "return ",
 	"const ", "let ", "var ", "if (", "for (", "{", "}", "();",
 	"=>", "->", "//",
+	"public ", "private ", "protected ", "interface ", "abstract ", "void ", "type ",
 }
 
 // ResolveBookProfile auto-detects whether the document is Technical or Fiction.
@@ -832,7 +833,16 @@ func collectCodeBlock(lines []VisualLine, startIdx int, medianPitch float64, pro
 			}
 		}
 
-		if isCodeStart(curr, profile) || (len(block) > 0 && curr.Left >= block[0].Left-10.0 && curr.FontSize <= block[0].FontSize*1.15) {
+		isContinuation := false
+		if len(block) > 0 {
+			if block[0].IsMonospace {
+				isContinuation = curr.IsMonospace && curr.Left >= block[0].Left-10.0 && curr.FontSize <= block[0].FontSize*1.15
+			} else {
+				isContinuation = curr.Left >= block[0].Left-10.0 && curr.FontSize <= block[0].FontSize*1.15
+			}
+		}
+
+		if isCodeStart(curr, profile) || isContinuation {
 			block = append(block, curr)
 			idx++
 		} else {
@@ -859,18 +869,57 @@ func renderCodeBlock(lines []VisualLine) string {
 		monoCharW = lines[0].FontSize * 0.58
 	}
 
+	// Compute base pitch between consecutive lines to detect blank lines
+	basePitch := 14.0
+	var pitches []float64
+	for i := 1; i < len(lines); i++ {
+		p := lines[i].Top - lines[i-1].Top
+		if p > 0 {
+			pitches = append(pitches, p)
+		}
+	}
+	if len(pitches) > 0 {
+		sort.Float64s(pitches)
+		basePitch = pitches[len(pitches)/2]
+		if basePitch <= 0 {
+			basePitch = 14.0
+		}
+	}
+
 	var buf bytes.Buffer
 	buf.WriteString("<pre><code>")
 	for i, l := range lines {
-		indentSpaces := int(math.Round((l.Left - minLeft) / monoCharW))
-		if indentSpaces < 0 {
-			indentSpaces = 0
+		if i > 0 {
+			pitch := l.Top - lines[i-1].Top
+			if pitch >= 1.65*basePitch {
+				extraLines := int(math.Round(pitch/basePitch)) - 1
+				if extraLines > 2 {
+					extraLines = 2
+				}
+				for k := 0; k < extraLines; k++ {
+					buf.WriteByte('\n')
+				}
+			}
 		}
-		if indentSpaces > 64 {
-			indentSpaces = 64
+
+		indentFromLeft := int(math.Round((l.Left - minLeft) / monoCharW))
+		if indentFromLeft < 0 {
+			indentFromLeft = 0
 		}
-		buf.WriteString(strings.Repeat(" ", indentSpaces))
-		escapeXMLText(&buf, l.PlainText)
+		plain := strings.ReplaceAll(l.PlainText, "\t", "    ")
+		trimmedLeft := strings.TrimLeft(plain, " ")
+		textSpaces := len(plain) - len(trimmedLeft)
+
+		totalIndent := textSpaces
+		if indentFromLeft > textSpaces {
+			totalIndent = indentFromLeft
+		}
+		if totalIndent > 64 {
+			totalIndent = 64
+		}
+
+		buf.WriteString(strings.Repeat(" ", totalIndent))
+		escapeXMLText(&buf, trimmedLeft)
 		if i+1 < len(lines) {
 			buf.WriteByte('\n')
 		}

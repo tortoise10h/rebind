@@ -412,9 +412,16 @@ func BuildVisualLines(page *xmlPage, fontMap map[string]FontInfo) []VisualLine {
 			})
 		}
 
-		plainText := strings.TrimSpace(plainBuilder.String())
-		richXHTML := strings.TrimSpace(richBuilder.String())
-		if plainText == "" {
+		var plainText string
+		var richXHTML string
+		if dominantFont.IsMonospace || (len(cluster) > 0 && cluster[0].Font.IsMonospace) {
+			plainText = strings.TrimRight(plainBuilder.String(), " \t\r\n")
+			richXHTML = strings.TrimRight(richBuilder.String(), " \t\r\n")
+		} else {
+			plainText = strings.TrimSpace(plainBuilder.String())
+			richXHTML = strings.TrimSpace(richBuilder.String())
+		}
+		if strings.TrimSpace(plainText) == "" {
 			continue
 		}
 
@@ -511,7 +518,9 @@ func StripRunningNoise(pages [][]VisualLine, pageHeights []float64) [][]VisualLi
 
 	totalNumPages := len(pages)
 	minOccurrences := 3
-	if totalNumPages >= 3 && totalNumPages <= 6 {
+	if totalNumPages == 2 {
+		minOccurrences = 2
+	} else if totalNumPages >= 3 && totalNumPages <= 6 {
 		minOccurrences = int(math.Ceil(float64(totalNumPages) * 0.40))
 	}
 
