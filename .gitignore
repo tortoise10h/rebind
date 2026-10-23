@@ -1,0 +1,39 @@
+# Binaries and build artifacts
+bin/
+dist/
+/rebind
+/verify
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test and coverage artifacts
+*.test
+*.out
+*.prof
+
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment and sensitive credentials
+.env
+.env.*
+*.pem
+*.key
+*.cert
+*.crt
+credentials.*
+secrets.*
+
+# Sample media, large test files, and output epubs
+sample/*.pdf
+sample/*.epub
+*.epub
