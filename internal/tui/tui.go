@@ -23,6 +23,25 @@ const (
 	stateError
 )
 
+// Tab represents the active converter view mode in the TUI.
+type Tab int
+
+const (
+	TabWeb Tab = iota
+	TabPDF
+)
+
+func (t Tab) String() string {
+	switch t {
+	case TabWeb:
+		return "Web Article"
+	case TabPDF:
+		return "PDF Document"
+	default:
+		return "Unknown"
+	}
+}
+
 type progressMsg converter.ProgressEvent
 
 type doneMsg struct {
@@ -66,6 +85,17 @@ var (
 	subtitleStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A0A0B0"))
 
+	activeTabStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#6C5CE7")).
+			Padding(0, 2)
+
+	inactiveTabStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#8E8EA0")).
+			Background(lipgloss.Color("#25233A")).
+			Padding(0, 2)
+
 	boxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#6C5CE7")).
@@ -87,6 +117,10 @@ var (
 	labelStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#DCDCE6"))
+
+	promptStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#A29BFE"))
 
 	dimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#6C6C80"))
@@ -110,44 +144,80 @@ var (
 
 // Model is the Bubble Tea model for the rebind TUI.
 type Model struct {
-	state         state
-	input         textinput.Model
-	spinner       spinner.Model
-	outputDir     string
-	profile       converter.BookProfile
-	isPDF         bool
-	currentStep   converter.Step
-	statusMessage string
-	result        *converter.Result
-	err           error
-	actionStatus  string
-	progressCh    chan converter.ProgressEvent
+	state           state
+	activeTab       Tab
+	webTab          WebTab
+	pdfTab          PDFTab
+	spinner         spinner.Model
+	outputDir       string
+	isPDF           bool
+	convertingInput string
+	currentStep     converter.Step
+	statusMessage   string
+	result          *converter.Result
+	err             error
+	actionStatus    string
+	progressCh      chan converter.ProgressEvent
 }
 
 // NewModel initializes a new TUI model.
 func NewModel(initialURL string, outputDir string) Model {
-	ti := textinput.New()
-	ti.Placeholder = "https://example.com/post or ~/Books/novel.pdf"
-	ti.Focus()
-	ti.CharLimit = 2048
-	ti.Width = 64
-	ti.Prompt = "Input > "
-	ti.PromptStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#A29BFE"))
-	if initialURL != "" {
-		ti.SetValue(initialURL)
-	}
-
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#A29BFE"))
 
+	var activeTab Tab
+	var webInitial, pdfInitial string
+
+	if initialURL != "" {
+		if isPDFInput(initialURL) {
+			activeTab = TabPDF
+			pdfInitial = initialURL
+		} else {
+			activeTab = TabWeb
+			webInitial = initialURL
+		}
+	} else {
+		activeTab = TabWeb
+	}
+
+	webTab := newWebTab(webInitial)
+	pdfTab := newPDFTab(pdfInitial, converter.ProfileAuto)
+
+	if activeTab == TabWeb {
+		webTab.Focus()
+	} else {
+		pdfTab.Focus()
+	}
+
 	return Model{
 		state:     stateInput,
-		input:     ti,
+		activeTab: activeTab,
+		webTab:    webTab,
+		pdfTab:    pdfTab,
 		spinner:   sp,
 		outputDir: outputDir,
-		profile:   converter.ProfileAuto,
 	}
+}
+
+// ActiveTab returns the currently active tab.
+func (m Model) ActiveTab() Tab {
+	return m.activeTab
+}
+
+// WebInput returns the current value of the web URL input.
+func (m Model) WebInput() string {
+	return m.webTab.Value()
+}
+
+// PDFInput returns the current value of the PDF path input.
+func (m Model) PDFInput() string {
+	return m.pdfTab.Value()
+}
+
+// Profile returns the current book profile for PDF conversions.
+func (m Model) Profile() converter.BookProfile {
+	return m.pdfTab.Profile()
 }
 
 func isPDFInput(val string) bool {
@@ -167,7 +237,30 @@ func isPDFInput(val string) bool {
 }
 
 func (m Model) Init() tea.Cmd {
-	return textinput.Blink
+	if m.activeTab == TabWeb {
+		return tea.Batch(textinput.Blink, m.webTab.Focus())
+	}
+	return tea.Batch(textinput.Blink, m.pdfTab.Focus())
+}
+
+func (m *Model) switchTab(tab Tab) tea.Cmd {
+	if m.activeTab == tab {
+		return nil
+	}
+	m.activeTab = tab
+	if tab == TabWeb {
+		m.pdfTab.Blur()
+		return m.webTab.Focus()
+	}
+	m.webTab.Blur()
+	return m.pdfTab.Focus()
+}
+
+func (m *Model) toggleTab() tea.Cmd {
+	if m.activeTab == TabWeb {
+		return m.switchTab(TabPDF)
+	}
+	return m.switchTab(TabWeb)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -181,8 +274,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			if m.state == stateDone || m.state == stateError {
-				m.resetToInput(m.state == stateDone)
-				return m, textinput.Blink
+				cmd := m.resetToInput(m.state == stateDone)
+				return m, cmd
 			}
 			return m, tea.Quit
 		}
@@ -191,33 +284,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case stateInput:
 			switch msg.String() {
 			case "enter":
-				raw := strings.TrimSpace(m.input.Value())
+				var raw string
+				var isPDF bool
+				if m.activeTab == TabPDF {
+					raw = strings.TrimSpace(m.pdfTab.Value())
+					isPDF = true
+				} else {
+					raw = strings.TrimSpace(m.webTab.Value())
+					isPDF = isPDFInput(raw)
+				}
 				if raw == "" {
 					return m, nil
 				}
-				return m.startConversion(raw)
-			case "tab":
-				if isPDFInput(m.input.Value()) {
-					switch m.profile {
-					case converter.ProfileAuto:
-						m.profile = converter.ProfileFiction
-					case converter.ProfileFiction:
-						m.profile = converter.ProfileTechnical
-					default:
-						m.profile = converter.ProfileAuto
-					}
-					return m, nil
-				}
-			case "shift+tab":
-				if isPDFInput(m.input.Value()) {
-					switch m.profile {
-					case converter.ProfileAuto:
-						m.profile = converter.ProfileTechnical
-					case converter.ProfileTechnical:
-						m.profile = converter.ProfileFiction
-					default:
-						m.profile = converter.ProfileAuto
-					}
+				return m.startConversion(raw, isPDF)
+
+			case "tab", "shift+tab", "ctrl+t":
+				cmd := m.toggleTab()
+				return m, cmd
+
+			case "ctrl+p", "f2":
+				if m.activeTab == TabPDF {
+					m.pdfTab.CycleProfile()
 					return m, nil
 				}
 			}
@@ -227,8 +314,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "q":
 				return m, tea.Quit
 			case "enter", "n":
-				m.resetToInput(true)
-				return m, textinput.Blink
+				cmd := m.resetToInput(true)
+				return m, cmd
 			case "o":
 				if m.result != nil {
 					return m, openInAppleBooksCmd(m.result.OutputPath)
@@ -244,8 +331,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "q":
 				return m, tea.Quit
 			case "enter", "r":
-				m.resetToInput(false)
-				return m, textinput.Blink
+				cmd := m.resetToInput(false)
+				return m, cmd
 			}
 		}
 
@@ -279,14 +366,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.state == stateInput {
 		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
+		if m.activeTab == TabWeb {
+			cmd = m.webTab.Update(msg)
+		} else {
+			cmd = m.pdfTab.Update(msg)
+		}
 		return m, cmd
 	}
 
 	return m, nil
 }
 
-func (m *Model) resetToInput(clearValue bool) {
+func (m *Model) resetToInput(clearValue bool) tea.Cmd {
 	m.state = stateInput
 	m.err = nil
 	m.result = nil
@@ -294,25 +385,34 @@ func (m *Model) resetToInput(clearValue bool) {
 	m.currentStep = 0
 	m.statusMessage = ""
 	if clearValue {
-		m.input.SetValue("")
+		if m.activeTab == TabWeb {
+			m.webTab.SetValue("")
+		} else {
+			m.pdfTab.SetValue("")
+		}
 	}
-	m.input.Focus()
+	if m.activeTab == TabWeb {
+		return m.webTab.Focus()
+	}
+	return m.pdfTab.Focus()
 }
 
-func (m Model) startConversion(rawInput string) (tea.Model, tea.Cmd) {
+func (m Model) startConversion(rawInput string, isPDF bool) (tea.Model, tea.Cmd) {
 	m.state = stateConverting
 	m.err = nil
 	m.result = nil
 	m.actionStatus = ""
 	m.currentStep = converter.StepFetching
 	m.statusMessage = "Starting conversion..."
-	m.isPDF = isPDFInput(rawInput)
-	m.input.Blur()
+	m.isPDF = isPDF
+	m.convertingInput = rawInput
+	m.webTab.Blur()
+	m.pdfTab.Blur()
 
 	ch := make(chan converter.ProgressEvent, 16)
 	m.progressCh = ch
 	outDir := m.outputDir
-	profile := m.profile
+	profile := m.pdfTab.profile
 
 	runCmd := func() tea.Msg {
 		defer close(ch)
@@ -369,6 +469,20 @@ func revealInFinderCmd(epubPath string) tea.Cmd {
 	}
 }
 
+func (m Model) renderTabBar() string {
+	var webTabRendered, pdfTabRendered string
+
+	if m.activeTab == TabWeb {
+		webTabRendered = activeTabStyle.Render("1. Web Article")
+		pdfTabRendered = inactiveTabStyle.Render("2. PDF Document")
+	} else {
+		webTabRendered = inactiveTabStyle.Render("1. Web Article")
+		pdfTabRendered = activeTabStyle.Render("2. PDF Document")
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, webTabRendered, "  ", pdfTabRendered)
+}
+
 func (m Model) View() string {
 	var b strings.Builder
 
@@ -380,23 +494,26 @@ func (m Model) View() string {
 
 	switch m.state {
 	case stateInput:
-		selector := ""
-		if isPDFInput(m.input.Value()) {
-			selector = renderProfileSelector(m.profile)
+		tabsBar := m.renderTabBar()
+		var tabContent string
+		var helpText string
+
+		if m.activeTab == TabWeb {
+			tabContent = m.webTab.View()
+			helpText = "enter: convert to epub • tab: switch to PDF • esc / ctrl+c: quit"
+		} else {
+			tabContent = m.pdfTab.View()
+			helpText = "enter: convert to epub • tab: switch to Web • ctrl+p: cycle profile • esc / ctrl+c: quit"
 		}
-		content := fmt.Sprintf(
-			"%s\n\n%s%s",
-			labelStyle.Render("Paste a web URL or local PDF path (drag & drop supported):"),
-			m.input.View(),
-			selector,
-		)
-		b.WriteString("  " + indentMultiline(boxStyle.Render(content), "  "))
+
+		b.WriteString("  " + tabsBar + "\n")
+		b.WriteString("  " + indentMultiline(boxStyle.Render(tabContent), "  "))
 		b.WriteString("\n")
-		b.WriteString("  " + helpStyle.Render("enter: convert to epub • tab: switch profile • esc / ctrl+c: quit"))
+		b.WriteString("  " + helpStyle.Render(helpText))
 
 	case stateConverting:
 		var stepsView strings.Builder
-		stepsView.WriteString(labelStyle.Render("Converting: ") + dimStyle.Render(truncate(m.input.Value(), 54)) + "\n\n")
+		stepsView.WriteString(labelStyle.Render("Converting: ") + dimStyle.Render(truncate(m.convertingInput, 54)) + "\n\n")
 
 		steps := pipelineSteps
 		if m.isPDF {
@@ -455,38 +572,11 @@ func (m Model) View() string {
 		)
 		b.WriteString("  " + indentMultiline(errorBoxStyle.Render(errContent), "  "))
 		b.WriteString("\n")
-		b.WriteString("  " + helpStyle.Render("enter / r: edit URL & retry • q / esc: quit"))
+		b.WriteString("  " + helpStyle.Render("enter / r: edit input & retry • q / esc: quit"))
 	}
 
 	b.WriteString("\n")
 	return b.String()
-}
-
-func renderProfileSelector(current converter.BookProfile) string {
-	autoRadio := "○ Auto-Detect"
-	fictionRadio := "○ Fiction"
-	techRadio := "○ Technical"
-
-	active := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#A29BFE"))
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C6C80"))
-
-	switch current {
-	case converter.ProfileFiction:
-		fictionRadio = "[● Fiction]"
-	case converter.ProfileTechnical:
-		techRadio = "[● Technical]"
-	default:
-		autoRadio = "[● Auto-Detect]"
-	}
-
-	return fmt.Sprintf(
-		"\n\n%s  %s   %s   %s     %s",
-		dim.Render("Book Profile:"),
-		active.Render(autoRadio),
-		active.Render(fictionRadio),
-		active.Render(techRadio),
-		dim.Render("(tab: switch profile)"),
-	)
 }
 
 func indentMultiline(s string, indent string) string {
