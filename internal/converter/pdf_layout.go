@@ -18,7 +18,7 @@ func stripHTMLTags(s string) string {
 	return htmlTagRegex.ReplaceAllString(s, "")
 }
 
-// expandUnicodeLigatures replaces typographic ligatures with their standard ASCII equivalents.
+// expandUnicodeLigatures replaces typographic ligatures and PUA bullet glyphs with standard equivalents.
 func expandUnicodeLigatures(s string) string {
 	if s == "" {
 		return ""
@@ -31,6 +31,16 @@ func expandUnicodeLigatures(s string) string {
 	s = strings.ReplaceAll(s, "\uFB04", "ffl")
 	s = strings.ReplaceAll(s, "\uFB05", "st")
 	s = strings.ReplaceAll(s, "\uFB06", "st")
+	// Wingdings / Symbol Private Use Area bullets (e.g. Manning \uF0A1 '')
+	s = strings.ReplaceAll(s, "\uF0A1", "•")
+	s = strings.ReplaceAll(s, "\uF0A7", "•")
+	s = strings.ReplaceAll(s, "\uF0B7", "•")
+	s = strings.ReplaceAll(s, "\uF076", "•")
+	s = strings.ReplaceAll(s, "\uF0D8", "•")
+	s = strings.ReplaceAll(s, "\uF0FC", "•")
+	s = strings.ReplaceAll(s, "\uF06C", "•")
+	s = strings.ReplaceAll(s, "\uF06E", "•")
+	s = strings.ReplaceAll(s, "\uF075", "•")
 	return sanitizeXMLChars(s)
 }
 
@@ -281,10 +291,21 @@ func BuildVisualLines(page *xmlPage, fontMap map[string]FontInfo) []VisualLine {
 			return cluster[i].Left < cluster[j].Left
 		})
 
+		// Interpolate kerned single-letter/short runs positioned inside an outer run's horizontal span
+		cluster = interpolateKernedRuns(cluster)
+
+		// Strip right-margin bold proportional code-annotation callouts when the line starts with code
+		cluster = stripRightMarginCodeCallouts(cluster)
+		if len(cluster) == 0 {
+			continue
+		}
+
 		// Find dominant font and overall bounds
 		fontWeights := make(map[string]int)
-		var maxLenFont FontInfo
-		maxLen := -1
+		fontByID := make(map[string]FontInfo)
+		hasProportionalRun := false
+		allBold := true
+		allItalic := true
 		minTop := cluster[0].Top
 		maxBottom := cluster[0].Top + cluster[0].Height
 		minLeft := cluster[0].Left
@@ -292,9 +313,15 @@ func BuildVisualLines(page *xmlPage, fontMap map[string]FontInfo) []VisualLine {
 
 		for _, r := range cluster {
 			fontWeights[r.Font.ID] += len(r.PlainText)
-			if len(r.PlainText) > maxLen {
-				maxLen = len(r.PlainText)
-				maxLenFont = r.Font
+			fontByID[r.Font.ID] = r.Font
+			if !r.Font.IsMonospace && strings.TrimSpace(r.PlainText) != "➥" {
+				hasProportionalRun = true
+			}
+			if !r.IsBold {
+				allBold = false
+			}
+			if !r.IsItalic {
+				allItalic = false
 			}
 			if r.Top < minTop {
 				minTop = r.Top
@@ -310,8 +337,21 @@ func BuildVisualLines(page *xmlPage, fontMap map[string]FontInfo) []VisualLine {
 			}
 		}
 
+		var dominantFont FontInfo
+		maxWeight := -1
+		for id, w := range fontWeights {
+			if w > maxWeight {
+				maxWeight = w
+				dominantFont = fontByID[id]
+			}
+		}
+		if hasProportionalRun || listingPrefixRegex.MatchString(strings.TrimSpace(cluster[0].PlainText)) {
+			dominantFont.IsMonospace = false
+		} else if len(cluster) > 0 && strings.TrimSpace(cluster[0].PlainText) == "➥" {
+			dominantFont.IsMonospace = true
+		}
+
 		lineHeight := maxBottom - minTop
-		dominantFont := maxLenFont
 		lineFontSize := dominantFont.Size
 		if lineFontSize <= 0 {
 			lineFontSize = lineHeight
@@ -412,9 +452,30 @@ func BuildVisualLines(page *xmlPage, fontMap map[string]FontInfo) []VisualLine {
 			})
 		}
 
+		// Merge 2-cell hanging section numbers (e.g. "9.1" + "Why we need...", "A.1" + "Installing...")
+		// or 2-cell caption labels (e.g. "Listing 9.2" + "parsing_results.py", "Figure 9.1" + "The differences...")
+		if hasMultiColumns && len(cells) == 2 &&
+			(cells[1].Left-cells[0].Right) <= 70.0 &&
+			((cells[0].Left < 160.0 && hangingSectionNumRegex.MatchString(cells[0].PlainText)) ||
+				captionCellPrefixRegex.MatchString(cells[0].PlainText)) {
+			hasMultiColumns = false
+			mergedPlain := cells[0].PlainText + " " + cells[1].PlainText
+			mergedRich := cells[0].RichXHTML + " " + cells[1].RichXHTML
+			cells = []TextCell{{
+				Left:      cells[0].Left,
+				Right:     cells[1].Right,
+				PlainText: mergedPlain,
+				RichXHTML: mergedRich,
+			}}
+			plainBuilder.Reset()
+			plainBuilder.WriteString(mergedPlain)
+			richBuilder.Reset()
+			richBuilder.WriteString(mergedRich)
+		}
+
 		var plainText string
 		var richXHTML string
-		if dominantFont.IsMonospace || (len(cluster) > 0 && cluster[0].Font.IsMonospace) {
+		if dominantFont.IsMonospace {
 			plainText = strings.TrimRight(plainBuilder.String(), " \t\r\n")
 			richXHTML = strings.TrimRight(richBuilder.String(), " \t\r\n")
 		} else {
@@ -432,8 +493,8 @@ func BuildVisualLines(page *xmlPage, fontMap map[string]FontInfo) []VisualLine {
 			Height:             lineHeight,
 			Right:              maxRight,
 			FontSize:           lineFontSize,
-			IsBold:             dominantFont.IsBold,
-			IsItalic:           dominantFont.IsItalic,
+			IsBold:             dominantFont.IsBold || allBold,
+			IsItalic:           dominantFont.IsItalic || allItalic,
 			IsMonospace:        dominantFont.IsMonospace,
 			PlainText:          plainText,
 			RichXHTML:          richXHTML,
@@ -457,10 +518,132 @@ func BuildVisualLines(page *xmlPage, fontMap map[string]FontInfo) []VisualLine {
 }
 
 var (
-	pageNumberRegex      = regexp.MustCompile(`^(?i)(?:page\s+)?(\d+|[ivxlcdm]+)(?:\s*(?:/|of)\s*\d+)?$`)
-	browserArtifactRegex = regexp.MustCompile(`^(?i)(about:blank|\d{1,2}/\d{1,2}/\d{2,4},?\s+\d{1,2}:\d{2})$`)
-	digitRegex           = regexp.MustCompile(`\d+`)
+	pageNumberRegex        = regexp.MustCompile(`^(?i)(?:page\s+)?(\d+|[ivxlcdm]+)(?:\s*(?:/|of)\s*\d+)?$`)
+	browserArtifactRegex   = regexp.MustCompile(`^(?i)(about:blank|\d{1,2}/\d{1,2}/\d{2,4},?\s+\d{1,2}:\d{2})$`)
+	digitRegex             = regexp.MustCompile(`\d+`)
+	listingPrefixRegex     = regexp.MustCompile(`^(?:Listing|LISTING)\s+\d+`)
+	captionCellPrefixRegex = regexp.MustCompile(`^(?:Figure|FIGURE|Fig\.|FIG\.|Table|TABLE|Listing|LISTING|Algorithm|ALGORITHM)\s+\d+(?:\.\d+)*$`)
+	hangingSectionNumRegex = regexp.MustCompile(`^(?:[0-9]+\.[0-9]+(?:\.[0-9]+)*|[A-Z]\.[0-9]+(?:\.[0-9]+)*)$`)
+	runningHeaderPageRegex = regexp.MustCompile(`^(?:\d{1,4}\s{2,}\S.*|.*\S\s{2,}\d{1,4})$`)
 )
+
+func isSingleNonArticleLetter(word string) bool {
+	word = strings.Trim(word, ",.;:!?\"'()[]{}")
+	if len(word) != 1 {
+		return false
+	}
+	ch := word[0]
+	if ch == 'a' || ch == 'A' || ch == 'I' {
+		return false
+	}
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+}
+
+// interpolateKernedRuns splices short interior kerned runs (e.g. "J" inside "the inja2",
+// "s" inside "The ystem", "el" inside "using d imiters,") into the enclosing outer run.
+func interpolateKernedRuns(cluster []textRunInfo) []textRunInfo {
+	if len(cluster) < 2 {
+		return cluster
+	}
+	out := make([]textRunInfo, 0, len(cluster))
+	for i := 0; i < len(cluster); i++ {
+		curr := cluster[i]
+		if len(out) > 0 {
+			prevIdx := len(out) - 1
+			outer := out[prevIdx]
+			innerTrim := strings.TrimSpace(curr.PlainText)
+			if len(innerTrim) > 0 && len(innerTrim) <= 3 &&
+				outer.Width > 20.0 &&
+				curr.Left > outer.Left+2.0 && curr.Right < outer.Right-2.0 {
+				rel := (curr.Left - outer.Left) / outer.Width
+				targetIdx := int(math.Round(rel * float64(len(outer.PlainText))))
+				bestSpace := -1
+				bestDist := len(outer.PlainText) + 1
+				for idx := 0; idx < len(outer.PlainText); idx++ {
+					if outer.PlainText[idx] == ' ' {
+						dist := idx - targetIdx
+						if dist < 0 {
+							dist = -dist
+						}
+						if dist < bestDist {
+							bestDist = dist
+							bestSpace = idx
+						}
+					}
+				}
+				if bestSpace >= 0 {
+					before := outer.PlainText[:bestSpace]
+					after := outer.PlainText[bestSpace+1:]
+					wordsBefore := strings.Fields(before)
+					wordsAfter := strings.Fields(after)
+					lastBefore := ""
+					if len(wordsBefore) > 0 {
+						lastBefore = wordsBefore[len(wordsBefore)-1]
+					}
+					firstAfter := ""
+					if len(wordsAfter) > 0 {
+						firstAfter = wordsAfter[0]
+					}
+					var newPlain string
+					if isSingleNonArticleLetter(lastBefore) || isSingleNonArticleLetter(firstAfter) {
+						newPlain = before + innerTrim + after
+					} else {
+						newPlain = before + " " + innerTrim + after
+					}
+					outer.PlainText = newPlain
+					var buf bytes.Buffer
+					escapeXMLText(&buf, newPlain)
+					rich := buf.String()
+					if outer.IsBold && outer.Font.IsBold {
+						// Font already marks bold; check if original RichXHTML had explicit tags
+						if strings.HasPrefix(outer.RichXHTML, "<strong>") {
+							rich = "<strong>" + rich + "</strong>"
+						}
+					} else if outer.IsBold {
+						rich = "<strong>" + rich + "</strong>"
+					}
+					if outer.IsItalic && strings.Contains(outer.RichXHTML, "<em>") {
+						rich = "<em>" + rich + "</em>"
+					}
+					outer.RichXHTML = rich
+					out[prevIdx] = outer
+					continue
+				}
+			}
+		}
+		out = append(out, curr)
+	}
+	return out
+}
+
+// stripRightMarginCodeCallouts removes bold proportional margin annotations placed to the right
+// of monospace code lines (e.g. HumanistMann521 callouts at left >= 450 on Listing 9.2/9.3/9.4).
+func stripRightMarginCodeCallouts(cluster []textRunInfo) []textRunInfo {
+	if len(cluster) < 2 {
+		return cluster
+	}
+	hasLeftCode := false
+	for _, r := range cluster {
+		if r.Left < 350.0 && (r.Font.IsMonospace || strings.TrimSpace(r.PlainText) == "➥") {
+			hasLeftCode = true
+			break
+		}
+	}
+	if !hasLeftCode {
+		return cluster
+	}
+	if listingPrefixRegex.MatchString(strings.TrimSpace(cluster[0].PlainText)) {
+		return cluster
+	}
+	out := make([]textRunInfo, 0, len(cluster))
+	for _, r := range cluster {
+		if r.Left >= 450.0 && !r.Font.IsMonospace && r.IsBold && strings.TrimSpace(r.PlainText) != "➥" {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
 
 func normalizeHeaderFooterTemplate(s string) string {
 	s = digitRegex.ReplaceAllString(s, "#")
@@ -474,12 +657,6 @@ func StripRunningNoise(pages [][]VisualLine, pageHeights []float64) [][]VisualLi
 	}
 
 	// 1. Gather cross-page header and footer template frequencies
-	type templateLocation struct {
-		Template string
-		Zone     string // "header" or "footer"
-		Y        float64
-	}
-
 	templateCount := make(map[string]int)
 
 	for pIdx, lines := range pages {
@@ -488,7 +665,7 @@ func StripRunningNoise(pages [][]VisualLine, pageHeights []float64) [][]VisualLi
 			pHeight = pageHeights[pIdx]
 		}
 		headerThreshold := 0.085 * pHeight
-		footerThreshold := 0.915 * pHeight
+		footerThreshold := 0.895 * pHeight
 
 		seenOnThisPage := make(map[string]bool)
 		for _, line := range lines {
@@ -532,7 +709,7 @@ func StripRunningNoise(pages [][]VisualLine, pageHeights []float64) [][]VisualLi
 			pHeight = pageHeights[pIdx]
 		}
 		headerThreshold := 0.085 * pHeight
-		footerThreshold := 0.915 * pHeight
+		footerThreshold := 0.895 * pHeight
 
 		filtered := make([]VisualLine, 0, len(lines))
 		for _, line := range lines {
@@ -548,6 +725,19 @@ func StripRunningNoise(pages [][]VisualLine, pageHeights []float64) [][]VisualLi
 				// Check browser artifacts
 				if browserArtifactRegex.MatchString(trimmed) {
 					continue
+				}
+				// Running header with a margin page number (e.g. "214   CHAPTER 9..." or "9.1 Why we need...   213")
+				if isHeader && line.Top < 0.068*pHeight {
+					if runningHeaderPageRegex.MatchString(trimmed) {
+						continue
+					}
+					if len(line.CellStops) >= 2 {
+						firstCell := strings.TrimSpace(line.CellStops[0].PlainText)
+						lastCell := strings.TrimSpace(line.CellStops[len(line.CellStops)-1].PlainText)
+						if pageNumberRegex.MatchString(firstCell) || pageNumberRegex.MatchString(lastCell) {
+							continue
+						}
+					}
 				}
 				// Check template frequency across pages
 				norm := normalizeHeaderFooterTemplate(trimmed)

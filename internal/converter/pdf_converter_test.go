@@ -919,3 +919,104 @@ func TestPostProcessEPUBHygiene(t *testing.T) {
 		t.Errorf("expected nav.xhtml to have landmarks section")
 	}
 }
+
+func TestTechnicalLayoutAndStateMachineFixes(t *testing.T) {
+	// 1. Wingdings PUA bullet expansion
+	if got := expandUnicodeLigatures("\uF0A1 Item one"); got != "• Item one" {
+		t.Errorf("expected PUA bullet expanded to '• Item one', got %q", got)
+	}
+
+	// 2. Kerned run interpolation + mixed inline code + hanging section number merging
+	fontMap := map[string]FontInfo{
+		"body": {ID: "body", Family: "NewBaskerville", Size: 15, IsMonospace: false},
+		"mono": {ID: "mono", Family: "CourierStd", Size: 13, IsMonospace: true},
+		"sec":  {ID: "sec", Family: "FranklinGothic-DemiItal", Size: 19, IsBold: true, IsItalic: true},
+		"call": {ID: "call", Family: "HumanistMann521-BoldCondensed", Size: 14, IsBold: true},
+		"ding": {ID: "ding", Family: "ZapfDingbats", Size: 16},
+	}
+
+	page := &xmlPage{
+		Number: 239,
+		Width:  796,
+		Height: 999,
+		Texts: []xmlText{
+			// Hanging section number "9.1" + title
+			{Top: 100, Left: 99, Width: 26, Height: 16, FontID: "sec", InnerXML: "<i><b>9.1</b></i>"},
+			{Top: 100, Left: 153, Width: 350, Height: 16, FontID: "sec", InnerXML: "<i><b>Why we need systematic prompt engineering</b></i>"},
+			// Prose line with long inline path (must remain IsMonospace=false and wrap path in <code>)
+			{Top: 140, Left: 158, Width: 123, Height: 14, FontID: "body", InnerXML: "Open VS Code to"},
+			{Top: 142, Left: 282, Width: 346, Height: 10, FontID: "mono", InnerXML: "chapter_09/promptflow/simpleflow/flow.dag.yaml"},
+			{Top: 140, Left: 628, Width: 70, Height: 14, FontID: "body", InnerXML: ", and open"},
+			// Kerned single-letter run inside outer run ("the inja2 template." + "J")
+			{Top: 180, Left: 211, Width: 104, Height: 12, FontID: "call", InnerXML: "<b>the inja2 template.</b>"},
+			{Top: 180, Left: 231, Width: 4, Height: 12, FontID: "call", InnerXML: "<b>J</b>"},
+			// Kerned mid-word run ("using d imiters," + "el")
+			{Top: 200, Left: 257, Width: 321, Height: 10, FontID: "body", InnerXML: "Tactics include detailing queries, adopting personas, using d imiters,"},
+			{Top: 200, Left: 537, Width: 8, Height: 10, FontID: "body", InnerXML: "el"},
+		},
+	}
+
+	vLines := BuildVisualLines(page, fontMap)
+	if len(vLines) != 4 {
+		t.Fatalf("expected 4 visual lines, got %d", len(vLines))
+	}
+	if vLines[0].HasMultipleColumns || vLines[0].PlainText != "9.1 Why we need systematic prompt engineering" {
+		t.Errorf("expected merged section heading line without multi-columns, got multi=%v text=%q", vLines[0].HasMultipleColumns, vLines[0].PlainText)
+	}
+	if vLines[1].IsMonospace || !strings.Contains(vLines[1].RichXHTML, "<code>chapter_09/promptflow/simpleflow/flow.dag.yaml</code>") {
+		t.Errorf("expected mixed prose+path line to be non-monospace with inline <code>, got mono=%v rich=%q", vLines[1].IsMonospace, vLines[1].RichXHTML)
+	}
+	if vLines[2].PlainText != "the Jinja2 template." {
+		t.Errorf("expected interpolated 'the Jinja2 template.', got %q", vLines[2].PlainText)
+	}
+	if !strings.Contains(vLines[3].PlainText, "using delimiters,") {
+		t.Errorf("expected interpolated 'using delimiters,', got %q", vLines[3].PlainText)
+	}
+
+	// 3. Composite negative-height figure + callout absorption + Listing with right-margin callouts and ➥ continuation
+	figImages := []xmlImage{
+		{Top: 486, Left: 105, Width: 606, Height: -404, Src: "book-263_1.png"},
+		{Top: 132, Left: 105, Width: 605, Height: -50, Src: "book-263_2.png"},
+		{Top: 486, Left: 105, Width: 50, Height: -354, Src: "book-263_3.png"},
+	}
+	smLines := []VisualLine{
+		{Top: 200, Left: 315, Width: 176, Right: 491, Height: 12, FontSize: 14, IsBold: true, PlainText: "line_process block processes", RichXHTML: "<strong>line_process block processes</strong>"},
+		{Top: 508, Left: 103, Width: 528, Right: 631, Height: 10, FontSize: 12, PlainText: "Figure 9.24 Looking at the evaluate_groundings flow"},
+		{Top: 556, Left: 171, Width: 205, Right: 376, Height: 12, FontSize: 14, IsBold: true, PlainText: "Listing 9.4 aggregate.py", RichXHTML: "Listing 9.4 <code><strong>aggregate.py</strong></code>"},
+		{Top: 585, Left: 140, Width: 317, Right: 457, Height: 10, FontSize: 12, IsMonospace: true, PlainText: "def aggregate(processed_results):"},
+		{Top: 600, Left: 140, Width: 367, Right: 507, Height: 10, FontSize: 12, IsMonospace: true, PlainText: "    items = [item for sublist in processed_results"},
+		{Top: 610, Left: 240, Width: 15, Right: 255, Height: 20, FontSize: 16, IsMonospace: true, PlainText: "➥"},
+		{Top: 615, Left: 262, Width: 173, Right: 435, Height: 10, FontSize: 12, IsMonospace: true, PlainText: "for item in sublist]"},
+		{Top: 620, Left: 556, Width: 94, Right: 650, Height: 12, FontSize: 14, IsBold: true, PlainText: "The input is a list"},
+		{Top: 630, Left: 140, Width: 151, Right: 291, Height: 10, FontSize: 12, IsMonospace: true, PlainText: "    return items"},
+	}
+
+	croppedFigures := 0
+	cfg := StateMachineConfig{
+		Profile:      ProfileTechnical,
+		MedianPitch:  19.0,
+		MedianHeight: 14.0,
+		CropRegion: func(pageNum int, left, top, width, height float64, label string) (string, error) {
+			croppedFigures++
+			return "cropped_" + label + ".png", nil
+		},
+	}
+
+	blocks := parseSinglePage(smLines, figImages, 263, 15.0, cfg)
+	if croppedFigures != 1 {
+		t.Fatalf("expected 3 overlapping negative-height images to coalesce into 1 cropped figure, got %d", croppedFigures)
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("expected 3 blocks (Figure, Heading3 Listing, Code), got %d: %+v", len(blocks), blocks)
+	}
+	if blocks[0].Kind != BlockFigure || !strings.Contains(blocks[0].XHTML, "Figure 9.24") {
+		t.Errorf("expected block 0 to be Figure 9.24, got %+v", blocks[0])
+	}
+	if blocks[1].Kind != BlockHeading3 || !strings.Contains(blocks[1].XHTML, "Listing 9.4") {
+		t.Errorf("expected block 1 to be Heading3 Listing 9.4, got %+v", blocks[1])
+	}
+	if blocks[2].Kind != BlockCode || !strings.Contains(blocks[2].XHTML, "items = [item for sublist in processed_results for item in sublist]") || strings.Contains(blocks[2].XHTML, "The input is a list") {
+		t.Errorf("expected block 2 to join ➥ continuation and omit margin callout, got %s", blocks[2].XHTML)
+	}
+}
+
