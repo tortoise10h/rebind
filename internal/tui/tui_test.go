@@ -222,3 +222,98 @@ func TestResetToInput(t *testing.T) {
 		t.Errorf("expected cleared PDF input, got %q", m.PDFInput())
 	}
 }
+
+func TestValidateWebInput(t *testing.T) {
+	valid := []string{
+		"https://example.com/article",
+		"http://blog.golang.org/go1.22",
+		"example.com/post",
+	}
+	for _, input := range valid {
+		if err := validateWebInput(input); err != nil {
+			t.Errorf("expected %q to be valid web input, got error: %v", input, err)
+		}
+	}
+
+	invalid := []struct {
+		input       string
+		errContains string
+	}{
+		{"", "please enter a web URL"},
+		{"/path/to/doc.pdf", "Web tab only accepts web article URLs"},
+		{"sample.pdf", "Web tab only accepts web article URLs"},
+		{"https://example.com/doc.pdf", "Web tab only accepts web article URLs"},
+		{"file:///Users/me/book.pdf", "Web tab only accepts web article URLs"},
+		{"justwords", "invalid web URL"},
+	}
+	for _, tt := range invalid {
+		err := validateWebInput(tt.input)
+		if err == nil {
+			t.Errorf("expected error for %q, got nil", tt.input)
+		} else if !strings.Contains(err.Error(), tt.errContains) {
+			t.Errorf("for %q expected error containing %q, got %q", tt.input, tt.errContains, err.Error())
+		}
+	}
+}
+
+func TestValidatePDFInput(t *testing.T) {
+	valid := []string{
+		"/Users/user/doc.pdf",
+		"sample.pdf",
+		"~/Downloads/book.pdf",
+		"'~/Downloads/book.pdf'",
+		"file:///tmp/doc.pdf",
+		"https://example.com/book.pdf",
+	}
+	for _, input := range valid {
+		if err := validatePDFInput(input); err != nil {
+			t.Errorf("expected %q to be valid PDF input, got error: %v", input, err)
+		}
+	}
+
+	invalid := []struct {
+		input       string
+		errContains string
+	}{
+		{"", "please enter a PDF file path"},
+		{"https://example.com/article", "PDF tab only accepts PDF file paths"},
+		{"http://blog.com/post", "PDF tab only accepts PDF file paths"},
+		{"hello", "invalid PDF path"},
+		{"not-a-pdf.txt", "invalid PDF path"},
+	}
+	for _, tt := range invalid {
+		err := validatePDFInput(tt.input)
+		if err == nil {
+			t.Errorf("expected error for %q, got nil", tt.input)
+		} else if !strings.Contains(err.Error(), tt.errContains) {
+			t.Errorf("for %q expected error containing %q, got %q", tt.input, tt.errContains, err.Error())
+		}
+	}
+}
+
+func TestInputValidationOnEnter(t *testing.T) {
+	// Web tab rejects PDF on Enter
+	m := NewModel("", "/tmp/output")
+	m.webTab.SetValue("/tmp/novel.pdf")
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	if m.state != stateError {
+		t.Fatalf("expected stateError when pressing enter with PDF on web tab, got %v", m.state)
+	}
+	if !strings.Contains(m.err.Error(), "Web tab only accepts web article URLs") {
+		t.Errorf("expected error message to guide user to PDF tab, got %q", m.err.Error())
+	}
+
+	// PDF tab rejects Web URL on Enter
+	m = NewModel("", "/tmp/output")
+	m.switchTab(TabPDF)
+	m.pdfTab.SetValue("https://example.com/article")
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	if m.state != stateError {
+		t.Fatalf("expected stateError when pressing enter with Web URL on PDF tab, got %v", m.state)
+	}
+	if !strings.Contains(m.err.Error(), "PDF tab only accepts PDF file paths") {
+		t.Errorf("expected error message to guide user to Web tab, got %q", m.err.Error())
+	}
+}

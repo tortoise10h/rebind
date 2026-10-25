@@ -215,8 +215,9 @@ func blockKindToString(k converter.ParsedBlockKind) string {
 func summarizeBlock(xhtml string) string {
 	s := strings.ReplaceAll(xhtml, "\n", " ")
 	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
-	if len(s) > 100 {
-		return s[:97] + "..."
+	runes := []rune(s)
+	if len(runes) > 120 {
+		return string(runes[:117]) + "..."
 	}
 	return s
 }

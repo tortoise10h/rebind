@@ -236,6 +236,55 @@ func isPDFInput(val string) bool {
 	return false
 }
 
+func validateWebInput(val string) error {
+	trimmed := strings.TrimSpace(val)
+	if trimmed == "" {
+		return fmt.Errorf("please enter a web URL")
+	}
+
+	// Reject local files or PDF files on the Web tab
+	if isPDFInput(trimmed) || strings.HasSuffix(strings.ToLower(trimmed), ".pdf") {
+		return fmt.Errorf("Web tab only accepts web article URLs.\nPress Tab to switch to the PDF tab for %q", trimmed)
+	}
+
+	normalized, parsed, err := converter.NormalizeURL(trimmed)
+	if err != nil {
+		return fmt.Errorf("invalid web URL: %w", err)
+	}
+
+	if !strings.Contains(parsed.Host, ".") && parsed.Host != "localhost" {
+		return fmt.Errorf("invalid web URL: %q (expected http:// or https:// domain)", normalized)
+	}
+
+	return nil
+}
+
+func validatePDFInput(val string) error {
+	trimmed := strings.TrimSpace(val)
+	if trimmed == "" {
+		return fmt.Errorf("please enter a PDF file path")
+	}
+
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		if !strings.HasSuffix(lower, ".pdf") {
+			return fmt.Errorf("PDF tab only accepts PDF file paths.\nPress Tab to switch to the Web tab for %q", trimmed)
+		}
+	}
+
+	clean := trimmed
+	if (strings.HasPrefix(clean, "'") && strings.HasSuffix(clean, "'") && len(clean) >= 2) ||
+		(strings.HasPrefix(clean, "\"") && strings.HasSuffix(clean, "\"") && len(clean) >= 2) {
+		clean = strings.TrimSpace(clean[1 : len(clean)-1])
+	}
+
+	if !isPDFInput(clean) {
+		return fmt.Errorf("invalid PDF path: %q (expected a .pdf file)", trimmed)
+	}
+
+	return nil
+}
+
 func (m Model) Init() tea.Cmd {
 	if m.activeTab == TabWeb {
 		return tea.Batch(textinput.Blink, m.webTab.Focus())
@@ -284,19 +333,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case stateInput:
 			switch msg.String() {
 			case "enter":
-				var raw string
-				var isPDF bool
-				if m.activeTab == TabPDF {
+				var (
+					raw      string
+					validate func(string) error
+				)
+
+				switch m.activeTab {
+				case TabPDF:
 					raw = strings.TrimSpace(m.pdfTab.Value())
-					isPDF = true
-				} else {
+					validate = validatePDFInput
+				case TabWeb:
 					raw = strings.TrimSpace(m.webTab.Value())
-					isPDF = isPDFInput(raw)
+					validate = validateWebInput
 				}
+
 				if raw == "" {
 					return m, nil
 				}
-				return m.startConversion(raw, isPDF)
+				if err := validate(raw); err != nil {
+					m.state = stateError
+					m.err = err
+					return m, nil
+				}
+				return m.startConversion(raw)
 
 			case "tab", "shift+tab", "ctrl+t":
 				cmd := m.toggleTab()
@@ -397,14 +456,14 @@ func (m *Model) resetToInput(clearValue bool) tea.Cmd {
 	return m.pdfTab.Focus()
 }
 
-func (m Model) startConversion(rawInput string, isPDF bool) (tea.Model, tea.Cmd) {
+func (m Model) startConversion(rawInput string) (tea.Model, tea.Cmd) {
 	m.state = stateConverting
 	m.err = nil
 	m.result = nil
 	m.actionStatus = ""
 	m.currentStep = converter.StepFetching
 	m.statusMessage = "Starting conversion..."
-	m.isPDF = isPDF
+	m.isPDF = (m.activeTab == TabPDF)
 	m.convertingInput = rawInput
 	m.webTab.Blur()
 	m.pdfTab.Blur()
