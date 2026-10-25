@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How rebind turns a web page or a PDF into an EPUB</title>
+<style>
+  /* ================= BASE (copy this whole block) ================= */
+  :root {
+    --bg: #f7f6f2;                 /* warm paper */
+    --fg: #4b5362;                 /* slate gray body text */
+    --full-contrast: #191d26;
+    --title-color: #094eCE;        /* blue serif headings */
+    --accent: #094eCE;
+    --green: #188554;
+    --amber: #994000;
+    --red: #c22a1e;
+    --purple: #7c3aed;
+    --muted: #6e7686;
+    --border: hsl(220, 13%, 80%);       /* #c6cad2 */
+    --border-light: hsl(220, 13%, 90%); /* #e2e4e9 */
+    --link: hsl(220, 92%, 42%);
+    --link-underline: rgba(9, 78, 206, 0.2);
+    --inline-code-bg: rgba(9, 78, 206, 0.09);
+    --inline-code-fg: #301900;
+    --pre-bg: #ffffff; /* dim alternative instead of white: rgba(9, 78, 206, 0.04) */
+    --pre-border: rgba(9, 78, 206, 0.3);
+    --pre-shadow: rgba(9, 78, 206, 0.07);
+    --note-bg: #f1f6f9;
+    --note-border: #c7dde5;
+    --warn-bg: rgba(255, 196, 0, 0.08);
+    --warn-border: #ffd2b2;
+    --ok-bg: #eef7f0;
+    --ok-border: #bfdec9;
+    --table-border: rgba(9, 78, 206, 0.15);
+    --table-header-bg: #d9e1f2;
+    --table-alternate-bg: rgba(9, 78, 206, 0.035);
+
+    --font: "iA Writer Quattro S", -apple-system, "Segoe UI", Roboto, sans-serif;
+    --title-font: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+    --mono-font: "Lilex", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font);
+    line-height: 1.625;
+    font-size: 16px;
+  }
+  /* paper grain, like zed.dev */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    pointer-events: none;
+    opacity: 0.024;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 180px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 48px 32px 100px; }
+  header.hero { padding: 24px 0 12px; max-width: 720px; }
+  h1 {
+    font-family: var(--title-font);
+    font-weight: 400;
+    font-size: 36px;
+    color: var(--title-color);
+    margin: 0 0 10px;
+  }
+  h1 .pipe { color: var(--accent); }
+  p.lead { color: var(--muted); font-size: 17.5px; max-width: 700px; }
+  .rev { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  h2 {
+    font-family: var(--title-font);
+    font-weight: 400;
+    font-size: 24px;
+    color: var(--full-contrast);
+    margin-top: 56px;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-light);
+  }
+  h3 {
+    font-family: var(--title-font);
+    font-weight: 400;
+    font-size: 19px;
+    color: var(--full-contrast);
+    margin-top: 34px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--border-light);
+  }
+  p, ul, ol { max-width: 700px; }
+  li { margin-bottom: 4px; }
+  ul, ol { line-height: 1.75; }
+  strong { color: var(--full-contrast); }
+  a { color: var(--link); text-decoration: underline; text-decoration-color: var(--link-underline); }
+  a:hover { text-decoration-color: rgba(9, 78, 206, 0.5); }
+  code {
+    font-family: var(--mono-font);
+    font-size: 0.875em;
+    background: var(--inline-code-bg);
+    color: var(--inline-code-fg);
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+  pre {
+    background: var(--pre-bg);
+    border: 1px solid var(--pre-border);
+    box-shadow:
+      0 1px 2px rgba(9, 78, 206, 0.06),
+      0 8px 18px -6px rgba(9, 78, 206, 0.16);   /* the soft blue halo, like Zed */
+    border-radius: 8px;
+    padding: 18px 22px;
+    overflow-x: auto;
+    color: var(--full-contrast);
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  pre code { background: none; color: inherit; padding: 0; border: none; }
+  /* syntax tokens — filled by the tiny highlighter script at the end of <body>.
+     Reads like Zed's docs: strings/literals in blue, punctuation near-black. */
+  .tok-com { color: var(--muted); font-style: italic; }
+  .tok-str { color: #0b53d0; }
+  .tok-num { color: #0b53d0; }
+  .tok-key { color: var(--full-contrast); font-weight: 600; }
+  .tok-fn  { color: #8a4a00; }
+  kbd {
+    display: inline-block;
+    font-family: var(--mono-font);
+    font-size: 0.8em;
+    line-height: 1;
+    padding: 4px 6px;
+    border-radius: 4px;
+    background: hsl(0, 0%, 94%);
+    border: 1px solid #cccccc;
+    box-shadow: inset 0 -1px 0 #e6e6e6;
+    color: var(--full-contrast);
+    vertical-align: middle;
+  }
+  .card {
+    background: var(--pre-bg);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 18px 0;
+  }
+  /* code inside a card sits close to the card edge */
+  .card pre { margin: 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  .tag {
+    display: inline-block;
+    font-family: var(--mono-font);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 10px;
+    border-radius: 99px;
+    margin-right: 6px;
+    border: 1px solid transparent;
+  }
+  .tag.blue   { background: rgba(9, 78, 206, 0.09);  color: #093d9e; border-color: rgba(9, 78, 206, 0.25); }
+  .tag.green  { background: rgba(24, 133, 84, 0.1);  color: #0f5e3b; border-color: rgba(24, 133, 84, 0.3); }
+  .tag.orange { background: rgba(255, 196, 0, 0.14); color: #7a4a06; border-color: rgba(153, 64, 0, 0.3); }
+  .tag.pink   { background: rgba(219, 39, 119, 0.08); color: #9d174d; border-color: rgba(219, 39, 119, 0.25); }
+  .tag.purple { background: rgba(124, 58, 237, 0.07); color: #5b21b6; border-color: rgba(124, 58, 237, 0.25); }
+  .tag.red    { background: rgba(194, 42, 30, 0.08); color: #991b1b; border-color: rgba(194, 42, 30, 0.3); }
+  table { border-collapse: collapse; width: 100%; margin: 18px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--table-border); padding: 6px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--table-header-bg); color: var(--full-contrast); font-weight: 700; }
+  tbody tr:nth-child(2n) { background: var(--table-alternate-bg); }
+  .diagram {
+    background: var(--pre-bg);
+    border: 1px solid var(--pre-border);
+    box-shadow: 0 1px 3px var(--pre-shadow);
+    border-radius: 8px;
+    padding: 18px;
+    margin: 20px 0;
+  }
+  .diagram svg { width: 100%; height: auto; display: block; }
+  .cap { color: var(--muted); font-size: 13.5px; margin-top: 10px; }
+  .step { display: flex; gap: 14px; margin: 14px 0; align-items: flex-start; }
+  .step > div:not(.stepnum) { flex: 1; min-width: 0; }
+  .stepnum {
+    flex: 0 0 30px; height: 30px; border-radius: 50%;
+    background: var(--accent); color: #ffffff; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; margin-top: 2px;
+  }
+  .stepnum.green  { background: var(--green); }
+  .stepnum.orange { background: #b45309; }
+  .stepnum.pink   { background: #db2777; }
+  .stepnum.purple { background: var(--purple); }
+  .stepnum.red    { background: var(--red); }
+  .step p { margin: 0; }
+  .note {
+    position: relative;
+    background: var(--note-bg);
+    border: 1px solid var(--note-border);
+    border-radius: 6px;
+    padding: 12px 16px 12px 52px;
+    margin: 14px 0;
+    max-width: 700px;
+    font-size: 14.5px;
+  }
+  .note::before {
+    content: "ⓘ";
+    position: absolute;
+    left: 16px;
+    top: 12px;
+    font-size: 1.4rem;
+    font-weight: bold;
+    color: var(--accent);
+  }
+  .note b { color: var(--full-contrast); }
+  .note.warn { background: var(--warn-bg); border-color: var(--warn-border); }
+  .note.warn::before { content: "⚠"; color: var(--amber); }
+  .note.ok { background: var(--ok-bg); border-color: var(--ok-border); }
+  .note.ok::before { content: "✓"; color: var(--green); }
+  svg text { font-family: var(--font); }
+  details.codefold {
+    margin: 16px 0;
+    background: var(--pre-bg);
+    border: 1px solid var(--pre-border);
+    box-shadow: 0 1px 3px var(--pre-shadow);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  details.codefold summary {
+    cursor: pointer;
+    padding: 10px 16px;
+    font-weight: 600;
+    color: var(--accent);
+    font-size: 14px;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  details.codefold summary::before {
+    content: "\25B8";
+    color: var(--muted);
+    display: inline-block;
+    transform: rotate(0deg);
+    transition: transform 0.15s;
+  }
+  details.codefold[open] summary::before { transform: rotate(90deg); }
+  details.codefold summary::-webkit-details-marker { display: none; }
+  details.codefold pre {
+    margin: 0;
+    border: none;
+    border-top: 1px solid var(--pre-border);
+    border-radius: 0;
+    box-shadow: none;
+  }
+  details.codefold .fs {
+    font-size: 11px;
+    color: var(--muted);
+    font-weight: 500;
+    font-family: var(--mono-font);
+  }
+  .foot { color: var(--muted); font-size: 13px; margin-top: 80px; border-top: 1px solid var(--border-light); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>How <span class="pipe">rebind</span> turns a web page or a PDF into an EPUB</h1>
+  <p class="lead">By the end, you can explain both pipelines step by step. You will know how rebind removes web noise, how it finds bold text, headings, and code in a PDF, and where the reading layout comes from.</p>
+  <p class="rev">Source: <code>internal/converter/</code> — <code>converter.go</code>, <code>xhtml.go</code>, <code>pdf_converter.go</code>, <code>pdf_poppler.go</code>, <code>pdf_layout.go</code>, <code>pdf_statemachine.go</code>, <code>epub_hygiene.go</code>.</p>
+</header>
+
+<!-- ============================================================= -->
+<h2>0. Why you care, and the one idea under everything</h2>
+
+<div class="card">
+  <p><strong>An EPUB is a zip of small web pages.</strong> Inside the zip there are XHTML files (strict HTML), one CSS file, images, and a table of contents. An e-reader opens these pages and flows the text to fit its screen.</p>
+  <p>So both features have the same goal: <strong>produce clean XHTML plus one good stylesheet</strong>. The difference is the starting point.</p>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <p><span class="tag blue">Web URL</span></p>
+    <p>We start with <strong>too much structure</strong>. The page already has HTML tags, but also menus, ads, and buttons. The job is to <strong>remove</strong>.</p>
+  </div>
+  <div class="card">
+    <p><span class="tag orange">PDF file</span></p>
+    <p>We start with <strong>no structure</strong>. A PDF only says "draw this text at this position, with this font." The job is to <strong>rebuild</strong>.</p>
+  </div>
+</div>
+
+<div class="note">
+  <b>Analogy:</b> the web pipeline is like cleaning a messy room — the furniture is there, you throw out the junk. The PDF pipeline is like rebuilding a room from a photo — you guess what each object is from its size and place. The analogy stops at one point: both pipelines finish in the same room, because they share the same stylesheet and the same EPUB packer.
+</div>
+
+<!-- ============================================================= -->
+<h2>Part A — Web URL to EPUB</h2>
+
+<h3>A1. In one picture</h3>
+
+<div class="diagram">
+<svg viewBox="0 0 880 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7686"/></marker>
+  </defs>
+  <text x="440" y="24" text-anchor="middle" fill="#094ece" font-size="15" font-weight="bold">Web pipeline: from pasted URL to .epub file</text>
+
+  <!-- row 1 -->
+  <rect x="20" y="50" width="185" height="62" rx="10" fill="#094ace14" stroke="#094ece" stroke-width="1.5"/>
+  <text x="112" y="76" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">1. TUI input</text>
+  <text x="112" y="96" text-anchor="middle" font-size="10.5" fill="#6e7686">you paste, press Enter</text>
+
+  <rect x="245" y="50" width="185" height="62" rx="10" fill="#094ace14" stroke="#094ece" stroke-width="1.5"/>
+  <text x="337" y="76" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">2. Detect input kind</text>
+  <text x="337" y="96" text-anchor="middle" font-size="10.5" fill="#6e7686">URL? local PDF? remote PDF?</text>
+
+  <rect x="470" y="50" width="185" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="562" y="76" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">3. Fetch HTML</text>
+  <text x="562" y="96" text-anchor="middle" font-size="10.5" fill="#6e7686">HTTP GET as Safari</text>
+
+  <rect x="695" y="50" width="165" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="777" y="76" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">4. Readability</text>
+  <text x="777" y="96" text-anchor="middle" font-size="10.5" fill="#6e7686">keep only the article</text>
+
+  <line x1="207" y1="81" x2="241" y2="81" stroke="#6e7686" stroke-width="2" marker-end="url(#a1)"/>
+  <line x1="432" y1="81" x2="466" y2="81" stroke="#6e7686" stroke-width="2" marker-end="url(#a1)"/>
+  <line x1="657" y1="81" x2="691" y2="81" stroke="#6e7686" stroke-width="2" marker-end="url(#a1)"/>
+
+  <!-- side route for PDF responses -->
+  <path d="M 562 114 C 562 140, 480 140, 470 150" fill="none" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#a1)"/>
+  <text x="430" y="160" text-anchor="middle" font-size="10.5" fill="#7c3aed">response is a PDF → go to Part B</text>
+
+  <!-- connector row1 -> row2 -->
+  <path d="M 777 114 L 777 185 L 112 185 L 112 205" fill="none" stroke="#6e7686" stroke-width="2" marker-end="url(#a1)"/>
+
+  <!-- row 2 -->
+  <rect x="20" y="210" width="185" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="112" y="236" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">5. Download images</text>
+  <text x="112" y="256" text-anchor="middle" font-size="10.5" fill="#6e7686">6 at a time, into the zip</text>
+
+  <rect x="245" y="210" width="185" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="337" y="236" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">6. Sanitize to XHTML</text>
+  <text x="337" y="256" text-anchor="middle" font-size="10.5" fill="#6e7686">drop tags, strip attributes</text>
+
+  <rect x="470" y="210" width="185" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="562" y="236" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">7. Package EPUB</text>
+  <text x="562" y="256" text-anchor="middle" font-size="10.5" fill="#6e7686">header + CSS + chapter</text>
+
+  <rect x="695" y="210" width="165" height="62" rx="10" fill="#18855414" stroke="#188554" stroke-width="1.5"/>
+  <text x="777" y="236" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">8. Fix TOC, save</text>
+  <text x="777" y="256" text-anchor="middle" font-size="10.5" fill="#6e7686">~/Documents/Title.epub</text>
+
+  <line x1="207" y1="241" x2="241" y2="241" stroke="#6e7686" stroke-width="2" marker-end="url(#a1)"/>
+  <line x1="432" y1="241" x2="466" y2="241" stroke="#6e7686" stroke-width="2" marker-end="url(#a1)"/>
+  <line x1="657" y1="241" x2="691" y2="241" stroke="#6e7686" stroke-width="2" marker-end="url(#a1)"/>
+</svg>
+<p class="cap">Blue boxes take your input, amber boxes do the work, the green box writes the file. The purple dashed path shows one surprise: if the URL returns a PDF, the web pipeline hands it to the PDF pipeline.</p>
+</div>
+
+<h3>A2. Walk through it (question 1)</h3>
+
+<div class="step"><div class="stepnum">1</div><div><p>
+  <strong>You paste the URL and press Enter.</strong> The TUI is built with Bubble Tea (a Go framework for terminal apps). <code>startConversion</code> starts <code>ConvertWithOptions</code> in the background. It also opens a channel (a Go pipe between goroutines). The converter sends a progress event into this channel at each step, and the TUI shows it next to the spinner.
+</p>
+<details class="codefold">
+  <summary>Show how <code>startConversion</code> pipes progress events <span class="fs">internal/tui/tui.go · startConversion &amp; waitForProgressCmd</span></summary>
+<pre><code class="language-go">func (m Model) startConversion(rawInput string, isPDF bool) (tea.Model, tea.Cmd) {
+    // 1. Open a buffered channel (a Go pipe that holds up to 16 events)
+    ch := make(chan converter.ProgressEvent, 16)
+    m.progressCh = ch
+
+    // 2. Run ConvertWithOptions in the background and push events into the channel
+    runCmd := func() tea.Msg {
+        defer close(ch) // close the pipe when done
+        res, err := converter.ConvertWithOptions(context.Background(), rawInput, converter.ConvertOptions{
+            OutputDir: m.outputDir,
+            Profile:   m.pdfTab.profile,
+        }, func(ev converter.ProgressEvent) {
+            select {
+            case ch &lt;- ev: // send event into the pipe
+            default:       // never block if the buffer is full
+            }
+        })
+        if err != nil {
+            return errMsg{err: err}
+        }
+        return doneMsg{result: res}
+    }
+
+    // 3. Start three things at once: spinner, channel listener, and conversion
+    return m, tea.Batch(m.spinner.Tick, waitForProgressCmd(ch), runCmd)
+}
+
+// Read one event from the pipe and hand it to Bubble Tea's Update loop
+func waitForProgressCmd(ch &lt;-chan converter.ProgressEvent) tea.Cmd {
+    return func() tea.Msg {
+        ev, ok := &lt;-ch
+        if !ok { return nil }
+        return progressMsg(ev)
+    }
+}
+
+// In Update(): update the label and listen for the next event
+case progressMsg:
+    m.currentStep = msg.Step
+    m.statusMessage = msg.Message
+    return m, waitForProgressCmd(m.progressCh)</code></pre>
+</details>
+</div></div>
+<div class="step"><div class="stepnum">2</div><p>
+  <strong>rebind decides what you gave it.</strong> <code>DetectInputKind</code> removes quotes and checks: does a local file exist? Does the path end in <code>.pdf</code>? If not, it adds <code>https://</code> when it is missing and parses the URL. A URL that ends in <code>.pdf</code> goes to the PDF pipeline. Every other URL goes to the web pipeline.
+</p></div>
+<div class="step"><div class="stepnum orange">3</div><p>
+  <strong>rebind downloads the page.</strong> <code>fetchURLData</code> sends an HTTP GET with a Safari User-Agent, because some sites block unknown clients. It follows redirects, waits up to 45 seconds, and reads up to 50 MB. If the reply is really a PDF (by Content-Type or the <code>%PDF-</code> magic bytes), it saves a temp file and switches to Part B.
+</p></div>
+<div class="step"><div class="stepnum orange">4</div><p>
+  <strong>Readability finds the article.</strong> The <code>go-readability</code> library returns the main content as HTML, plus the title, author, site name, short summary, and language. If the title is empty, rebind uses the domain name.
+</p></div>
+<div class="step"><div class="stepnum orange">5</div><div><p>
+  <strong>rebind downloads the images.</strong> It collects every <code>&lt;img&gt;</code> in the article and downloads up to 6 at the same time. It uses a buffered channel of size 6 as a counting semaphore (a 6-slot gate). It checks the real file type from the bytes, not from the URL. Each good image goes into the EPUB as <code>img_0001.jpg</code>, <code>img_0002.png</code>, and so on.
+</p>
+<details class="codefold">
+  <summary>Show how rebind collects <code>&lt;img&gt;</code> URLs and downloads 6 at a time <span class="fs">internal/converter/xhtml.go · ExtractImageURLs &amp; converter.go · downloadImagesConcurrently</span></summary>
+<pre><code class="language-go">// 1. Walk the HTML tree and collect unique &lt;img&gt; URLs (including lazy data-src / srcset)
+func ExtractImageURLs(rawHTML string, baseURL *url.URL) []string {
+    doc, _ := html.Parse(strings.NewReader(rawHTML))
+    seen := make(map[string]bool)
+    var urls []string
+
+    var walk func(*html.Node)
+    walk = func(n *html.Node) {
+        if n.Type == html.ElementNode &amp;&amp; strings.EqualFold(n.Data, "img") {
+            src := resolveImgSrc(n, baseURL) // checks src, data-src, data-lazy-src, srcset
+            if src != "" &amp;&amp; !seen[src] &amp;&amp; (strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://")) {
+                seen[src] = true
+                urls = append(urls, src)
+            }
+        }
+        for c := n.FirstChild; c != nil; c = c.NextSibling {
+            walk(c)
+        }
+    }
+    walk(doc)
+    return urls
+}
+
+// 2. Download up to 6 images at the same time with a channel semaphore
+func downloadImagesConcurrently(ctx context.Context, urls []string, destDir string) map[string]string {
+    results := make(map[string]string)
+    var mu sync.Mutex
+    var wg sync.WaitGroup
+    sem := make(chan struct{}, 6) // 6-slot semaphore: at most 6 goroutines run inside at once
+    client := &amp;http.Client{Timeout: 15 * time.Second}
+
+    for i, imgURL := range urls {
+        wg.Add(1)
+        go func(index int, rawURL string) {
+            defer wg.Done()
+            select {
+            case sem &lt;- struct{}{}:        // take 1 of the 6 slots (waits if all 6 are busy)
+                defer func() { &lt;-sem }()   // release the slot when this download finishes
+            case &lt;-ctx.Done():
+                return
+            }
+
+            localPath, err := downloadSingleImage(ctx, client, rawURL, destDir, index)
+            if err != nil { return }
+            mu.Lock()
+            results[rawURL] = localPath
+            mu.Unlock()
+        }(i, imgURL)
+    }
+
+    wg.Wait()
+    return results
+}</code></pre>
+</details>
+</div></div>
+<div class="step"><div class="stepnum orange">6</div><p>
+  <strong>rebind cleans the HTML into strict XHTML.</strong> <code>SanitizeToXHTML</code> removes leftover noise tags and attributes. It also points each image to its copy inside the EPUB. Section A3 explains this step.
+</p></div>
+<div class="step"><div class="stepnum orange">7</div><div><p>
+  <strong>rebind builds the EPUB.</strong> It adds a small header (title, author, source link) above the article. Then it feeds 4 kinds of input into a <code>go-epub</code> book (metadata, local images, a data-URL stylesheet, and the XHTML body fragment), and writes the zip.
+</p>
+<details class="codefold">
+  <summary>Show the exact inputs passed to <code>go-epub</code> <span class="fs">internal/converter/converter.go &amp; pdf_converter.go</span></summary>
+<pre><code class="language-go">// 1. Book metadata (strings)
+book, _ := epub.NewEpub(title)       // required: book title
+book.SetAuthor(author)               // optional: author / byline
+book.SetDescription(article.Excerpt) // optional: summary (web pipeline)
+book.SetLang(article.Language)       // optional: ISO language code (web pipeline)
+
+// 2. Images: (local disk path, filename inside the EPUB zip) -&gt; returns internal path "../images/img_0001.jpg"
+internalPath, _ := book.AddImage("/tmp/rebind-assets/asset_0001.jpg", "img_0001.jpg")
+// (PDF only) mark one added image as the book cover:
+book.SetCover(coverInternalPath, "")
+
+// 3. Stylesheet: go-epub expects a path or data: URL, so rebind base64-encodes the CSS string
+cssDataURL := dataurl.EncodeBytes([]byte(epubStylesheet)) // "data:text/plain;charset=utf-8;base64,..."
+cssPath, _ := book.AddCSS(cssDataURL, "style.css")        // returns "../css/style.css"
+
+// 4. Chapter section(s): (XHTML body inner HTML, TOC title, filename in zip, cssPath from step 3)
+// Note: pass only the fragment inside &lt;body&gt;...&lt;/body&gt;; go-epub wraps it in the &lt;html&gt;/&lt;head&gt;/&lt;body&gt; shell.
+book.AddSection(fullChapterXHTML, title, "article.xhtml", cssPath)
+
+// 5. Output file path on disk
+book.Write(outputPath) // writes ~/Documents/Title.epub</code></pre>
+</details>
+</div></div>
+<div class="step"><div class="stepnum green">8</div><p>
+  <strong>rebind fixes the table of contents and saves.</strong> <code>PostProcessEPUB</code> opens the zip again. It adds the TOC fields that older Kindle and Apple Books versions expect. The file goes to <code>~/Documents</code>. If the name is taken, rebind adds <code>(2)</code>, <code>(3)</code>, and so on.
+</p></div>
+
+<details class="codefold">
+  <summary>Show the core of the web pipeline <span class="fs">internal/converter/converter.go · ConvertWithOptions</span></summary>
+<pre><code class="language-go">case InputWebURL:
+    data, finalURL, contentType, err := fetchURLData(ctx, target)
+    // a "web" URL that returns a PDF is re-routed to the PDF pipeline
+    if strings.HasPrefix(contentType, "application/pdf") || bytes.HasPrefix(data, []byte("%PDF-")) {
+        return convertPDF(ctx, tmpPDF.Name(), finalURL.String(), opts, onProgress)
+    }
+
+    article, err := readability.FromReader(bytes.NewReader(data), parsedURL)   // keep only the article
+    imageURLs := ExtractImageURLs(article.Content, parsedURL)
+    downloaded := downloadImagesConcurrently(ctx, imageURLs, tmpDir)          // 6 workers
+    // ... book.AddImage(...) for each downloaded image ...
+
+    bodyXHTML, err := SanitizeToXHTML(article.Content, parsedURL, replaceImg)  // strict XHTML
+    full := buildArticleXHTML(title, author, article.SiteName, parsedURL.String(), bodyXHTML)
+
+    cssPath, _ := book.AddCSS(dataurl.EncodeBytes([]byte(epubStylesheet)), "style.css")
+    book.AddSection(full, title, "article.xhtml", cssPath)
+    book.Write(outputPath)
+    PostProcessEPUB(outputPath)                                                // TOC compatibility fixes</code></pre>
+</details>
+
+<h3>A3. How the noise is removed (question 2)</h3>
+
+<p>rebind removes noise in <strong>two layers</strong>. Each layer works at a different size. The first layer throws away whole page areas. The second layer cleans single tags and attributes inside the article.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 880 330" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7686"/></marker>
+    <marker id="a2r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c22a1e"/></marker>
+  </defs>
+  <text x="440" y="24" text-anchor="middle" fill="#094ece" font-size="15" font-weight="bold">Two filters, two sizes</text>
+
+  <!-- raw page -->
+  <rect x="20" y="45" width="190" height="190" rx="10" fill="#094ace14" stroke="#094ece" stroke-width="1.5"/>
+  <text x="115" y="68" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">Raw web page</text>
+  <rect x="35" y="80" width="160" height="20" rx="4" fill="#c22a1e14" stroke="#c22a1e"/>
+  <text x="115" y="94" text-anchor="middle" font-size="10.5" fill="#c22a1e">nav menu</text>
+  <rect x="35" y="105" width="110" height="80" rx="4" fill="#18855414" stroke="#188554"/>
+  <text x="90" y="140" text-anchor="middle" font-size="10.5" fill="#188554">article</text>
+  <text x="90" y="155" text-anchor="middle" font-size="10" fill="#6e7686">text, img, code</text>
+  <rect x="150" y="105" width="45" height="80" rx="4" fill="#c22a1e14" stroke="#c22a1e"/>
+  <text x="172" y="148" text-anchor="middle" font-size="10" fill="#c22a1e">ads</text>
+  <rect x="35" y="190" width="160" height="20" rx="4" fill="#c22a1e14" stroke="#c22a1e"/>
+  <text x="115" y="204" text-anchor="middle" font-size="10.5" fill="#c22a1e">comments, footer</text>
+
+  <line x1="212" y1="140" x2="262" y2="140" stroke="#6e7686" stroke-width="2" marker-end="url(#a2)"/>
+
+  <!-- layer 1 -->
+  <rect x="266" y="45" width="200" height="190" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="366" y="68" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">Layer 1: Readability</text>
+  <text x="366" y="90" text-anchor="middle" font-size="10.5" fill="#6e7686">score each block of the page</text>
+  <text x="366" y="110" text-anchor="middle" font-size="10.5" fill="#6e7686">+ long text, many commas</text>
+  <text x="366" y="128" text-anchor="middle" font-size="10.5" fill="#6e7686">− many links, short text</text>
+  <text x="366" y="146" text-anchor="middle" font-size="10.5" fill="#6e7686">− class like "sidebar", "ad"</text>
+  <text x="366" y="172" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#191d26">keep the top-score block</text>
+  <text x="366" y="190" text-anchor="middle" font-size="10.5" fill="#6e7686">(the article)</text>
+
+  <line x1="468" y1="140" x2="518" y2="140" stroke="#6e7686" stroke-width="2" marker-end="url(#a2)"/>
+
+  <!-- layer 2 -->
+  <rect x="522" y="45" width="200" height="190" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="622" y="68" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">Layer 2: Sanitizer</text>
+  <text x="622" y="90" text-anchor="middle" font-size="10.5" fill="#6e7686">walk every tag in the article</text>
+  <text x="622" y="112" text-anchor="middle" font-size="10.5" fill="#6e7686">drop noise tags</text>
+  <text x="622" y="130" text-anchor="middle" font-size="10.5" fill="#6e7686">keep only safe attributes</text>
+  <text x="622" y="148" text-anchor="middle" font-size="10.5" fill="#6e7686">fix image links</text>
+  <text x="622" y="166" text-anchor="middle" font-size="10.5" fill="#6e7686">close every tag (XML)</text>
+  <text x="622" y="190" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#191d26">validate with XML parser</text>
+
+  <line x1="724" y1="140" x2="754" y2="140" stroke="#6e7686" stroke-width="2" marker-end="url(#a2)"/>
+
+  <rect x="758" y="105" width="105" height="70" rx="10" fill="#18855414" stroke="#188554" stroke-width="1.5"/>
+  <text x="810" y="135" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">Clean</text>
+  <text x="810" y="153" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">XHTML</text>
+
+  <!-- removed items -->
+  <line x1="366" y1="238" x2="366" y2="270" stroke="#c22a1e" stroke-width="1.5" marker-end="url(#a2r)"/>
+  <text x="366" y="290" text-anchor="middle" font-size="11" fill="#c22a1e">removes: menus, ads, sidebars,</text>
+  <text x="366" y="306" text-anchor="middle" font-size="11" fill="#c22a1e">comments, share bars, footers</text>
+
+  <line x1="622" y1="238" x2="622" y2="270" stroke="#c22a1e" stroke-width="1.5" marker-end="url(#a2r)"/>
+  <text x="622" y="290" text-anchor="middle" font-size="11" fill="#c22a1e">removes: button, form, script, svg, video,</text>
+  <text x="622" y="306" text-anchor="middle" font-size="11" fill="#c22a1e">style="…", onclick, data-*, broken images</text>
+</svg>
+<p class="cap">Readability throws away whole areas of the page. The sanitizer then cleans the tags and attributes that are left inside the article.</p>
+</div>
+
+<h4>Layer 1 — Readability: "which part of the page is the article?"</h4>
+<p><code>go-readability</code> is a Go port of Mozilla Readability, the engine behind Firefox Reader View. It does not know any site. It uses simple scores:</p>
+<ul>
+  <li>It removes blocks whose <code>class</code> or <code>id</code> sounds like noise, for example <code>comment</code>, <code>sidebar</code>, <code>footer</code>, <code>ad</code>, <code>share</code>.</li>
+  <li>It gives points to paragraphs with long text and many commas. Real prose has commas. Menus do not.</li>
+  <li>It passes those points up to the parent blocks. The block with the highest total is the article.</li>
+  <li>It removes blocks with a high <strong>link density</strong> (mostly link text and little normal text). These are usually "related posts" lists.</li>
+</ul>
+
+<h4>Layer 2 — Sanitizer: "make every tag safe for an e-reader"</h4>
+<p>Readability's output is still normal web HTML. E-readers need <strong>XHTML</strong>: HTML that follows strict XML rules. Every tag must close, attribute values need quotes, and some characters are not allowed. One small error can make Apple Books reject the whole chapter. <code>writeXHTMLNode</code> walks the HTML tree and writes each node again from scratch. It applies three rules:</p>
+
+<table>
+  <thead><tr><th>Rule</th><th>What it does</th><th>Example</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Drop list</strong> <span class="tag red">remove</span></td><td>Removes the tag <em>and everything inside it</em>.</td><td><code>script</code>, <code>style</code>, <code>iframe</code>, <code>form</code>, <code>button</code>, <code>input</code>, <code>svg</code>, <code>canvas</code>, <code>video</code>, <code>audio</code></td></tr>
+    <tr><td><strong>Attribute allowlist</strong> <span class="tag green">keep</span></td><td>Keeps only 14 attributes. It removes all others.</td><td>Keeps <code>href</code>, <code>src</code>, <code>alt</code>, <code>id</code>, <code>class</code>, <code>colspan</code>… Removes <code>style</code>, <code>onclick</code>, <code>data-*</code>, <code>width</code></td></tr>
+    <tr><td><strong>Unwrap</strong> <span class="tag orange">flatten</span></td><td>Removes the tag but keeps its text.</td><td><code>&lt;a&gt;</code> with no link target, tags with names that are not valid XML</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <b>Where do background colors go?</b> On most sites, colors and backgrounds come from the <code>style="…"</code> attribute or from site CSS. The sanitizer removes <code>style</code> and drops <code>&lt;style&gt;</code> tags. It never copies the site's CSS. So the page arrives with no colors at all. Only rebind's own stylesheet styles it.
+</div>
+
+<p>The sanitizer also does some small repairs:</p>
+<ul>
+  <li><strong>Lazy images:</strong> many sites put a blank placeholder in <code>src</code> and the real URL in <code>data-src</code> or <code>srcset</code>. <code>resolveImgSrc</code> finds the real one.</li>
+  <li><strong>Offline images only:</strong> if an image failed to download, the sanitizer removes the <code>&lt;img&gt;</code>. Without this, Apple Books shows a broken-image icon when you read offline.</li>
+  <li><strong>Relative links:</strong> it changes <code>href="/about"</code> to a full URL, so links still work from the e-reader.</li>
+  <li><strong>Bad characters:</strong> it removes control characters that XML forbids, and escapes <code>&amp;</code>, <code>&lt;</code>, <code>&gt;</code>.</li>
+  <li><strong>Final check:</strong> <code>validateXHTMLFragment</code> runs the result through Go's XML decoder. If it fails, the conversion stops with an error, so you never get a broken EPUB.</li>
+</ul>
+
+<div class="grid2">
+  <div class="card">
+    <p><span class="tag red">Before</span> (after Readability)</p>
+<pre><code class="language-html">&lt;div style="background:#fef3c7"&gt;
+  &lt;p class="lead" data-track="x"&gt;Hello&lt;br&gt;
+  &lt;img src="blank.gif"
+       data-src="/img/cat.jpg"&gt;
+  &lt;button onclick="share()"&gt;Share&lt;/button&gt;
+&lt;/div&gt;</code></pre>
+  </div>
+  <div class="card">
+    <p><span class="tag green">After</span> (sanitizer)</p>
+<pre><code class="language-html">&lt;div&gt;
+  &lt;p class="lead"&gt;Hello&lt;br/&gt;
+  &lt;img src="images/img_0001.jpg"
+       alt=""/&gt;
+  &lt;/p&gt;
+&lt;/div&gt;</code></pre>
+  </div>
+</div>
+<p class="cap">The inline color, the tracking attribute, and the button disappear. The lazy image points to its local copy. Every tag is closed.</p>
+
+<details class="codefold">
+  <summary>Show the drop list and the allowlist <span class="fs">internal/converter/xhtml.go</span></summary>
+<pre><code class="language-go">var droppedElements = map[string]bool{
+    "script": true, "style": true, "noscript": true, "iframe": true,
+    "form": true, "button": true, "input": true, "select": true, "textarea": true,
+    "object": true, "embed": true, "canvas": true, "audio": true, "video": true, "svg": true,
+}
+
+var allowedAttrs = map[string]bool{
+    "href": true, "src": true, "alt": true, "title": true, "id": true, "class": true,
+    "colspan": true, "rowspan": true, "headers": true, "scope": true,
+    "start": true, "type": true, "dir": true, "lang": true,
+}
+
+// inside writeXHTMLNode:
+if droppedElements[tag] { return }                 // skip the tag and its children
+if !allowedAttrs[key] || seenAttr[key] { continue } // skip this attribute</code></pre>
+</details>
+
+<h3>A4. Where the reading format comes from (question 3)</h3>
+
+<p>The format comes from <strong>one CSS string</strong> in Go code: <code>epubStylesheet</code> in <code>converter.go</code>. rebind writes it into the EPUB as <code>style.css</code> and links it from every chapter. The site's own CSS never enters the book. The web pipeline and the PDF pipeline use the same stylesheet.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 880 250" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7686"/></marker>
+  </defs>
+  <text x="440" y="24" text-anchor="middle" fill="#094ece" font-size="15" font-weight="bold">Inside the .epub zip</text>
+
+  <rect x="20" y="70" width="170" height="70" rx="10" fill="#094ace14" stroke="#094ece" stroke-width="1.5"/>
+  <text x="105" y="98" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">epubStylesheet</text>
+  <text x="105" y="118" text-anchor="middle" font-size="10.5" fill="#6e7686">a Go string constant</text>
+  <line x1="192" y1="105" x2="266" y2="105" stroke="#6e7686" stroke-width="2" marker-end="url(#a3)"/>
+  <text x="229" y="96" text-anchor="middle" font-size="10.5" fill="#6e7686">AddCSS</text>
+
+  <rect x="270" y="45" width="590" height="190" rx="16" fill="#0d94880d" stroke="#0d9488" stroke-width="2" stroke-dasharray="8,5"/>
+  <text x="290" y="68" fill="#0d9488" font-size="12" font-weight="bold">Title.epub (a zip file)</text>
+
+  <rect x="295" y="85" width="150" height="45" rx="8" fill="#18855414" stroke="#188554"/>
+  <text x="370" y="112" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#191d26">css/style.css</text>
+
+  <rect x="510" y="85" width="160" height="45" rx="8" fill="#b4530914" stroke="#b45309"/>
+  <text x="590" y="105" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#191d26">chapter .xhtml</text>
+  <text x="590" y="121" text-anchor="middle" font-size="10" fill="#6e7686">article or chapter_001…</text>
+
+  <line x1="508" y1="107" x2="449" y2="107" stroke="#6e7686" stroke-width="1.8" marker-end="url(#a3)"/>
+  <text x="478" y="100" text-anchor="middle" font-size="10" fill="#6e7686">links</text>
+
+  <rect x="700" y="85" width="140" height="45" rx="8" fill="#094ace14" stroke="#094ece"/>
+  <text x="770" y="112" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#191d26">images/…</text>
+  <line x1="672" y1="107" x2="696" y2="107" stroke="#6e7686" stroke-width="1.8" marker-end="url(#a3)"/>
+
+  <rect x="295" y="160" width="150" height="45" rx="8" fill="#f1f3f6" stroke="#094ece" stroke-dasharray="5,3"/>
+  <text x="370" y="187" text-anchor="middle" font-size="12" fill="#191d26">package.opf</text>
+  <rect x="470" y="160" width="170" height="45" rx="8" fill="#f1f3f6" stroke="#094ece" stroke-dasharray="5,3"/>
+  <text x="555" y="187" text-anchor="middle" font-size="12" fill="#191d26">nav.xhtml + toc.ncx</text>
+  <text x="750" y="180" text-anchor="middle" font-size="10.5" fill="#6e7686">book info + table of</text>
+  <text x="750" y="195" text-anchor="middle" font-size="10.5" fill="#6e7686">contents (fixed after write)</text>
+</svg>
+<p class="cap">Every chapter links to one shared stylesheet. The dashed boxes are book metadata that go-epub writes and PostProcessEPUB repairs.</p>
+</div>
+
+<p>The main design choices in the stylesheet:</p>
+
+<table>
+  <thead><tr><th>Concern</th><th>Rule in <code>epubStylesheet</code></th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Body text</strong></td><td><code>font-family: "Iowan Old Style", Georgia, …, serif</code><br><code>line-height: 1.68</code></td><td>A book serif and open line spacing are easy to read for a long time.</td></tr>
+    <tr><td><strong>Page padding</strong></td><td><code>body { padding: 0.5em 0.8em; margin: 0 auto }</code></td><td>Small padding. The e-reader adds its own margins, so a big value would waste space.</td></tr>
+    <tr><td><strong>Paragraph spacing</strong></td><td><code>p { margin: 0 0 1em 0 }</code></td><td>One empty line between paragraphs, no first-line indent, like a web article.</td></tr>
+    <tr><td><strong>Headings</strong></td><td><code>margin-top: 1.5em; margin-bottom: 0.5em; line-height: 1.3</code></td><td>More space above than below, so a heading sits close to its own text.</td></tr>
+    <tr><td><strong>Line breaks</strong></td><td><code>overflow-wrap: break-word</code>; in <code>pre</code>: <code>white-space: pre-wrap</code></td><td>Long URLs and long code lines wrap. They do not run off a small screen.</td></tr>
+    <tr><td><strong>Page breaks</strong></td><td><code>page-break-inside: avoid</code> on <code>img</code>, <code>figure</code></td><td>The reader does not cut an image in half between two pages.</td></tr>
+    <tr><td><strong>Images</strong></td><td><code>max-width: 100%; height: auto; display: block; margin: 1.2em auto</code></td><td>Images shrink to the screen width and sit centered.</td></tr>
+    <tr><td><strong>Code</strong></td><td>Monospace font at <code>0.88em</code>, light gray box, 1px border</td><td>Code looks different from prose, but stays readable.</td></tr>
+    <tr><td><strong>Colors</strong></td><td>Only <code>rgba(128,128,128, α)</code> grays. The body has no color.</td><td>Semi-transparent gray looks right on white, sepia, and dark mode. Kindle and Apple Books choose the text color.</td></tr>
+  </tbody>
+</table>
+
+<div class="note ok">
+  <b>Every size is in <code>em</code>, not pixels.</b> One <code>em</code> equals the current font size. When you make the font bigger on your Kindle, the padding, margins, and spaces grow with it. The layout keeps the same shape at every font size.
+</div>
+
+<!-- ============================================================= -->
+<h2>Part B — PDF file to EPUB</h2>
+
+<h3>B0. First, what a PDF really contains</h3>
+
+<p>A PDF is a set of <strong>drawing instructions</strong> for fixed pages. It does not say "this is a heading" or "this is a paragraph." It says "draw the text <em>Chapter 1</em> at x=120, y=200, in font Georgia-Bold, size 28." rebind uses <strong>Poppler</strong> (a free PDF toolkit: <code>brew install poppler</code>) to read these instructions as XML.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 880 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7686"/></marker>
+  </defs>
+  <text x="440" y="24" text-anchor="middle" fill="#094ece" font-size="15" font-weight="bold">What pdftohtml -xml gives us: text pieces with a position and a font</text>
+
+  <!-- page -->
+  <rect x="30" y="45" width="260" height="240" rx="4" fill="#ffffff" stroke="#6e7686" stroke-width="1.5"/>
+  <text x="160" y="62" text-anchor="middle" font-size="9" fill="#6e7686">The Long Road · 12</text>
+  <rect x="50" y="52" width="220" height="14" rx="2" fill="none" stroke="#c22a1e" stroke-dasharray="3,2"/>
+  <text x="50" y="100" font-size="20" font-weight="bold" fill="#191d26">Chapter 1</text>
+  <rect x="47" y="82" width="110" height="24" rx="2" fill="none" stroke="#094ece" stroke-dasharray="3,2"/>
+  <text x="50" y="130" font-size="10" fill="#4b5362">The morning was cold, and the</text>
+  <text x="50" y="145" font-size="10" fill="#4b5362">road ran north <tspan font-weight="bold">past the</tspan> old</text>
+  <text x="50" y="160" font-size="10" fill="#4b5362">mill. She <tspan font-style="italic">never</tspan> looked back.</text>
+  <rect x="47" y="120" width="180" height="45" rx="2" fill="none" stroke="#b45309" stroke-dasharray="3,2"/>
+  <text x="50" y="190" font-size="9.5" font-family="Menlo, monospace" fill="#191d26">func main() {</text>
+  <text x="62" y="204" font-size="9.5" font-family="Menlo, monospace" fill="#191d26">run()</text>
+  <text x="50" y="218" font-size="9.5" font-family="Menlo, monospace" fill="#191d26">}</text>
+  <rect x="47" y="179" width="110" height="44" rx="2" fill="none" stroke="#188554" stroke-dasharray="3,2"/>
+  <text x="160" y="275" text-anchor="middle" font-size="9" fill="#6e7686">12</text>
+  <rect x="145" y="265" width="30" height="14" rx="2" fill="none" stroke="#c22a1e" stroke-dasharray="3,2"/>
+
+  <line x1="300" y1="165" x2="350" y2="165" stroke="#6e7686" stroke-width="2" marker-end="url(#a4)"/>
+
+  <!-- xml -->
+  <rect x="355" y="45" width="505" height="240" rx="8" fill="#f1f3f6" stroke="#094ece" stroke-dasharray="5,3"/>
+  <g font-family="Menlo, monospace" font-size="10.5">
+    <text x="370" y="68" fill="#6e7686">&lt;fontspec id="0" size="9"  family="Georgia"/&gt;</text>
+    <text x="370" y="84" fill="#6e7686">&lt;fontspec id="1" size="20" family="Georgia-Bold"/&gt;</text>
+    <text x="370" y="100" fill="#6e7686">&lt;fontspec id="2" size="10" family="Georgia"/&gt;</text>
+    <text x="370" y="116" fill="#6e7686">&lt;fontspec id="3" size="9.5" family="Menlo-Regular"/&gt;</text>
+    <text x="370" y="140" fill="#c22a1e">&lt;text top="52" left="50" font="0"&gt;The Long Road · 12&lt;/text&gt;</text>
+    <text x="370" y="158" fill="#094ece">&lt;text top="82" left="50" font="1"&gt;Chapter 1&lt;/text&gt;</text>
+    <text x="370" y="176" fill="#b45309">&lt;text top="120" left="50" font="2"&gt;The morning was…&lt;/text&gt;</text>
+    <text x="370" y="194" fill="#b45309">&lt;text top="135" left="50" font="2"&gt;road ran north &lt;b&gt;past</text>
+    <text x="370" y="208" fill="#b45309">   the&lt;/b&gt; old&lt;/text&gt;</text>
+    <text x="370" y="226" fill="#188554">&lt;text top="180" left="50" font="3"&gt;func main() {&lt;/text&gt;</text>
+    <text x="370" y="244" fill="#188554">&lt;text top="194" left="62" font="3"&gt;run()&lt;/text&gt;</text>
+    <text x="370" y="268" fill="#c22a1e">&lt;text top="265" left="145" font="0"&gt;12&lt;/text&gt;</text>
+  </g>
+</svg>
+<p class="cap">Each colored box on the page becomes one or more &lt;text&gt; pieces with a top, a left, and a font id. Nothing says "heading" or "code". rebind must guess from size, font name, and position.</p>
+</div>
+
+<div class="note">
+  <b>Analogy:</b> the PDF pipeline is a detective. The clues are position (where), size (how big), font name (what style), and gaps (how far apart). The analogy stops here: a detective can ask questions. rebind cannot, so it uses fixed thresholds that work for most books.
+</div>
+
+<h3>B1. In one picture</h3>
+
+<div class="diagram">
+<svg viewBox="0 0 880 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7686"/></marker>
+  </defs>
+  <text x="440" y="24" text-anchor="middle" fill="#094ece" font-size="15" font-weight="bold">PDF pipeline: from file to .epub</text>
+
+  <rect x="20" y="50" width="185" height="62" rx="10" fill="#094ace14" stroke="#094ece" stroke-width="1.5"/>
+  <text x="112" y="76" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">1. Read with Poppler</text>
+  <text x="112" y="96" text-anchor="middle" font-size="10.5" fill="#6e7686">pdfinfo + pdftohtml -xml</text>
+
+  <rect x="245" y="50" width="185" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="337" y="76" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">2. Build visual lines</text>
+  <text x="337" y="96" text-anchor="middle" font-size="10.5" fill="#6e7686">join pieces on one baseline</text>
+
+  <rect x="470" y="50" width="185" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="562" y="76" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">3. Remove page noise</text>
+  <text x="562" y="96" text-anchor="middle" font-size="10.5" fill="#6e7686">headers, footers, columns</text>
+
+  <rect x="695" y="50" width="165" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="777" y="76" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">4. Learn the book</text>
+  <text x="777" y="96" text-anchor="middle" font-size="10.5" fill="#6e7686">profile, median size, words</text>
+
+  <line x1="207" y1="81" x2="241" y2="81" stroke="#6e7686" stroke-width="2" marker-end="url(#a5)"/>
+  <line x1="432" y1="81" x2="466" y2="81" stroke="#6e7686" stroke-width="2" marker-end="url(#a5)"/>
+  <line x1="657" y1="81" x2="691" y2="81" stroke="#6e7686" stroke-width="2" marker-end="url(#a5)"/>
+
+  <path d="M 777 114 L 777 165 L 112 165 L 112 205" fill="none" stroke="#6e7686" stroke-width="2" marker-end="url(#a5)"/>
+
+  <rect x="20" y="210" width="185" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="112" y="236" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">5. Classify each line</text>
+  <text x="112" y="256" text-anchor="middle" font-size="10.5" fill="#6e7686">heading? code? paragraph?</text>
+
+  <rect x="245" y="210" width="185" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="337" y="236" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">6. Images and crops</text>
+  <text x="337" y="256" text-anchor="middle" font-size="10.5" fill="#6e7686">cover, figures, big tables</text>
+
+  <rect x="470" y="210" width="185" height="62" rx="10" fill="#b4530914" stroke="#b45309" stroke-width="1.5"/>
+  <text x="562" y="236" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">7. Split into chapters</text>
+  <text x="562" y="256" text-anchor="middle" font-size="10.5" fill="#6e7686">join paragraphs across pages</text>
+
+  <rect x="695" y="210" width="165" height="62" rx="10" fill="#18855414" stroke="#188554" stroke-width="1.5"/>
+  <text x="777" y="236" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">8. Package, fix TOC</text>
+  <text x="777" y="256" text-anchor="middle" font-size="10.5" fill="#6e7686">same CSS as web</text>
+
+  <line x1="207" y1="241" x2="241" y2="241" stroke="#6e7686" stroke-width="2" marker-end="url(#a5)"/>
+  <line x1="432" y1="241" x2="466" y2="241" stroke="#6e7686" stroke-width="2" marker-end="url(#a5)"/>
+  <line x1="657" y1="241" x2="691" y2="241" stroke="#6e7686" stroke-width="2" marker-end="url(#a5)"/>
+</svg>
+<p class="cap">The PDF pipeline has more amber "work" boxes than the web pipeline, because it must rebuild the structure that a web page already has.</p>
+</div>
+
+<h3>B2. Walk through it (question 1)</h3>
+
+<div class="step"><div class="stepnum">1</div><p>
+  <strong>Read the PDF with Poppler.</strong> <code>pdfinfo</code> gives the title, author, and page count. rebind ignores useless titles like "Untitled" or "Microsoft Word - …". <code>pdftohtml -xml</code> writes <code>book.xml</code>, which has every text piece, every font, the image files, and the PDF bookmarks (the outline).
+</p></div>
+<div class="step"><div class="stepnum orange">2</div><p>
+  <strong>Join text pieces into visual lines.</strong> One printed line is often split into many pieces, for example at each font change. <code>BuildVisualLines</code> sorts pieces top to bottom, then left to right. It groups pieces whose baselines (the bottom edges of the letters) are within about 3.5 points. The result is a <strong>visual line</strong>: one line of text with its position, size, and main font.
+</p></div>
+<div class="step"><div class="stepnum orange">3</div><p>
+  <strong>Remove page noise and fix reading order.</strong> <code>StripRunningNoise</code> looks at the top 8.5% and the bottom 8.5% of each page. It removes page numbers and any line that repeats on many pages (the book title, the chapter name). Before it compares, it changes every digit to <code>#</code>, so "Page 12" and "Page 13" count as the same line. <code>SplitPageColumns</code> finds two-column pages and puts the left column before the right column.
+</p></div>
+<div class="step"><div class="stepnum orange">4</div><p>
+  <strong>Learn about the whole book.</strong> rebind computes the <strong>median font size</strong> (the size of normal body text) and the <strong>median line pitch</strong> (the normal distance between two lines). Later rules compare against these two numbers. It also picks a profile: <span class="tag blue">technical</span> if the book has enough monospace text, code-like lines, or "Figure 3" captions; otherwise <span class="tag purple">fiction</span>. Last, it builds a <strong>lexicon</strong>: a count of every word in the book, used later to fix hyphenated words.
+</p></div>
+<div class="step"><div class="stepnum orange">5</div><p>
+  <strong>Classify each line.</strong> A state machine (a loop that checks a fixed list of cases in order) reads lines from top to bottom. It decides: scene break, table, heading, code, list, or paragraph. Each decision makes a <code>ParsedBlock</code> of XHTML. Section B3 explains this step.
+</p></div>
+<div class="step"><div class="stepnum orange">6</div><p>
+  <strong>Handle images.</strong> rebind finds the cover on the first 3 pages, adds the normal images, and cuts out diagrams and large tables as PNG pictures. Section B3 explains this step too.
+</p></div>
+<div class="step"><div class="stepnum orange">7</div><p>
+  <strong>Split into chapters.</strong> <code>splitBlocksIntoChapters</code> tries three ways, in order: (A) the PDF bookmarks, (B) the detected <code>h1</code> headings, (C) groups of 20 pages. Then it joins paragraphs that a page break cut in two, and keeps only one <code>h1</code> per chapter file.
+</p></div>
+<div class="step"><div class="stepnum green">8</div><p>
+  <strong>Package and save.</strong> rebind checks each chapter with the XML parser. If a chapter fails, the web sanitizer cleans it. Then rebind adds the same stylesheet as the web pipeline, writes the zip, and runs the same TOC fix.
+</p></div>
+
+<h3>B3. How rebind finds bold, italic, headings, code, and images (question 2)</h3>
+
+<p>There are no tags, so every format comes from one of four clues. This table is the short answer. The parts below give the detail.</p>
+
+<table>
+  <thead><tr><th>Format</th><th>Main clue</th><th>Output</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Bold / italic</strong></td><td>The font name contains "Bold" or "Italic", or Poppler marked it with <code>&lt;b&gt;</code>/<code>&lt;i&gt;</code></td><td><code>&lt;strong&gt;</code>, <code>&lt;em&gt;</code></td></tr>
+    <tr><td><strong>Underline, strikethrough</strong></td><td>Only if Poppler marked it with <code>&lt;u&gt;</code>/<code>&lt;s&gt;</code></td><td><code>&lt;u&gt;</code>, <code>&lt;del&gt;</code></td></tr>
+    <tr><td><strong>Headings</strong></td><td>Font size compared to the median body size, plus bold and spacing</td><td><code>&lt;h1&gt;</code>, <code>&lt;h2&gt;</code>, <code>&lt;h3&gt;</code></td></tr>
+    <tr><td><strong>Code block</strong></td><td>Monospace font name, box-drawing characters, or code keywords</td><td><code>&lt;pre&gt;&lt;code&gt;</code> with rebuilt indentation</td></tr>
+    <tr><td><strong>Image</strong></td><td>Image files from Poppler, or an empty area above a "Figure N" caption</td><td><code>&lt;figure&gt;&lt;img&gt;&lt;figcaption&gt;</code></td></tr>
+  </tbody>
+</table>
+
+<h4>Bold, italic, underline: read the font name</h4>
+<p>Fonts inside a PDF often have names like <code>ABCDEF+Georgia-BoldItalic</code>. The six letters and the plus sign are a <strong>subset prefix</strong> (a tag that says the PDF only includes the letters it uses). <code>classifyFont</code> removes the prefix and searches the name for word parts:</p>
+<ul>
+  <li><strong>Bold</strong>: <code>bold</code>, <code>black</code>, <code>heavy</code>, <code>demi</code>, <code>semibold</code></li>
+  <li><strong>Italic</strong>: <code>italic</code>, <code>oblique</code>, <code>slanted</code></li>
+  <li><strong>Monospace</strong>: <code>mono</code>, <code>courier</code>, <code>consolas</code>, <code>menlo</code>, <code>jetbrains</code>, <code>fira code</code>, and others</li>
+</ul>
+<p>Poppler also writes inline tags such as <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;u&gt;</code>, and <code>&lt;s&gt;</code> inside a text piece. <code>parseInnerXML</code> changes these to safe XHTML (<code>&lt;strong&gt;</code>, <code>&lt;em&gt;</code>, <code>&lt;u&gt;</code>, <code>&lt;del&gt;</code>) and drops every other tag.</p>
+<p>One more rule keeps the output clean. In each visual line, the font with the most characters is the <strong>dominant font</strong>. rebind wraps a piece in <code>&lt;strong&gt;</code> only when that piece is bold and the dominant font is <em>not</em> bold. So one bold word in a sentence becomes <code>&lt;strong&gt;</code>, but a fully bold heading line does not get a <code>&lt;strong&gt;</code> around every word. Italic and monospace work the same way. A monospace word inside normal text becomes inline <code>&lt;code&gt;</code>.</p>
+
+<div class="note warn">
+  <b>Underline is weak in PDFs.</b> Most PDFs draw an underline as a separate thin line shape, not as a text style. Poppler only gives text, so rebind keeps an underline only when Poppler marks it with <code>&lt;u&gt;</code>. Most underlines are lost. Bold and italic are reliable, because they live in the font name.
+</div>
+
+<h4>Headings: compare the size to normal text</h4>
+<p>"Big" only means something when you compare it to normal text. So rebind compares every line to the <strong>median font size</strong> of the book. The median ignores a few very large or very small lines, so it is a good measure of the body text size.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 880 210" xmlns="http://www.w3.org/2000/svg">
+  <text x="440" y="24" text-anchor="middle" fill="#094ece" font-size="15" font-weight="bold">Line font size ÷ median body size</text>
+
+  <rect x="40" y="60" width="330" height="44" rx="6" fill="#f1f3f6" stroke="#6e7686"/>
+  <text x="205" y="82" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">body text, or h3</text>
+  <text x="205" y="97" text-anchor="middle" font-size="10.5" fill="#6e7686">below 1.22×</text>
+
+  <rect x="370" y="60" width="200" height="44" rx="6" fill="#b4530914" stroke="#b45309"/>
+  <text x="470" y="82" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">h2</text>
+  <text x="470" y="97" text-anchor="middle" font-size="10.5" fill="#6e7686">1.22× to 1.45×</text>
+
+  <rect x="570" y="60" width="270" height="44" rx="6" fill="#094ace14" stroke="#094ece"/>
+  <text x="705" y="82" text-anchor="middle" font-size="13" font-weight="bold" fill="#191d26">h1</text>
+  <text x="705" y="97" text-anchor="middle" font-size="10.5" fill="#6e7686">1.45× or more</text>
+
+  <line x1="370" y1="52" x2="370" y2="112" stroke="#191d26" stroke-width="1.5"/>
+  <text x="370" y="128" text-anchor="middle" font-size="11" fill="#191d26">1.22×</text>
+  <line x1="570" y1="52" x2="570" y2="112" stroke="#191d26" stroke-width="1.5"/>
+  <text x="570" y="128" text-anchor="middle" font-size="11" fill="#191d26">1.45×</text>
+
+  <text x="205" y="160" text-anchor="middle" font-size="11" fill="#6e7686">h3 = bold, short (≤ 80 chars),</text>
+  <text x="205" y="176" text-anchor="middle" font-size="11" fill="#6e7686">big gap above, body text below</text>
+  <text x="705" y="160" text-anchor="middle" font-size="11" fill="#6e7686">also h1: "Chapter 4", "Part II", "Prologue"</text>
+  <text x="705" y="176" text-anchor="middle" font-size="11" fill="#6e7686">if bold or ≥ 1.2×</text>
+</svg>
+<p class="cap">Size picks h1 and h2. An h3 has the same size as body text, so rebind finds it by its bold font and the space around it.</p>
+</div>
+
+<p>Extra rules stop wrong headings:</p>
+<ul>
+  <li>A line is not a heading if it is in the bottom 15% of the page, if it is only digits and symbols, or if it has more than one sentence.</li>
+  <li>An <code>h1</code> that comes after a paragraph on the same page becomes an <code>h2</code>. A chapter title starts a page. It does not appear in the middle.</li>
+  <li>Two heading lines in a row join into one heading. For example, "Chapter 1" + "The Long Road" become one heading.</li>
+  <li>Each chapter file keeps only one <code>h1</code>. Any other <code>h1</code> becomes an <code>h2</code>.</li>
+</ul>
+
+<h4>Code blocks: monospace font, then rebuild the spaces</h4>
+<p>A line starts a code block when it is monospace, has 2 or more box-drawing characters (<code>┌ ─ │ └</code>, used in ASCII diagrams), or, in the technical profile only, starts with a code word like <code>func </code>, <code>def </code>, <code>class </code>, <code>{</code>, or <code>//</code>. rebind keeps adding the next lines while they are close together, not left of the first line, and not much bigger.</p>
+<p>Spaces are the hard part. A PDF does not keep space characters at the start of a line. It just draws the text further to the right. So <code>renderCodeBlock</code> turns that distance back into spaces:</p>
+
+<div class="card">
+<pre><code class="language-text">char_width  = font_size × 0.58          # a monospace letter is about 0.58 em wide
+indent      = round((line.left − leftmost_line.left) ÷ char_width)
+blank lines = round(gap ÷ normal_pitch) − 1   (at most 2)</code></pre>
+</div>
+<p>Example: <code>run()</code> starts 12 points right of <code>func main() {</code>. With a 10-point font, the character width is 5.8 points, so 12 ÷ 5.8 ≈ 2 spaces. A large vertical gap between two code lines becomes an empty line inside the <code>&lt;pre&gt;</code>.</p>
+
+<h4>Images: three sources</h4>
+<div class="step"><div class="stepnum">1</div><p>
+  <strong>Normal images.</strong> <code>pdftohtml</code> saves each photo or bitmap as a file. rebind adds it to the EPUB. Then it looks for a caption within 45 points above or below the image. A caption is a line that starts with "Figure N", is italic, or uses a smaller font.
+</p></div>
+<div class="step"><div class="stepnum orange">2</div><p>
+  <strong>Vector diagrams.</strong> Many diagrams are drawn with lines and shapes, not stored as image files. Poppler gives no file for them. rebind's clue: a "Figure 3" caption with an empty gap of 70 points or more above it. Something is drawn in that gap. <code>pdftoppm</code> renders that area at 300 DPI and saves it as a PNG.
+</p></div>
+<div class="step"><div class="stepnum green">3</div><p>
+  <strong>Large tables and sliced images.</strong> A table with more than 3 columns or more than 30 rows would look bad as HTML on a small screen, so rebind saves it as a picture. Some PDFs also cut one picture into hundreds of thin strips. When rebind finds 4 or more strips stacked together, it renders the whole area as one PNG.
+</p></div>
+<p>The <strong>cover</strong> is a separate check. On the first 3 pages, any image that covers 65% or more of the page width and height becomes the EPUB cover.</p>
+
+<details class="codefold">
+  <summary>Show the order of checks for each line <span class="fs">internal/converter/pdf_statemachine.go · parseSinglePage</span></summary>
+<pre><code class="language-go">for lineIdx &lt; len(lines) {
+    line := lines[lineIdx]
+    switch {
+    case isSceneBreakLine(line.PlainText):          // "* * *"  -&gt; &lt;hr class="scene-break"/&gt;
+    case line.HasMultipleColumns ||
+         tableCaptionRegex.MatchString(...):        // wide gaps -&gt; &lt;table&gt; (or PNG if large)
+    case tocChapterNumRegex.MatchString(...):       // "ONE", "TWO" on a contents page
+    case isHeading1(line, medianFontSize):          // &gt;= 1.45x, or "Chapter N"
+    case isHeading2(line, medianFontSize):          // 1.22x .. 1.45x
+    case isHeading3(lines, lineIdx, ...):           // bold + gap above
+    case isCodeStart(line, config.Profile):         // monospace / box chars / code words
+    case listItemRegex.MatchString(...):            // "•", "1.", "(a)"  -&gt; &lt;ul&gt;
+    default:                                        // paragraph (joins many lines)
+    }
+}
+// The order matters: the first case that matches wins.</code></pre>
+</details>
+
+<div class="note">
+  <b>Order matters.</b> A big bold line could match both "h1" and "h3". The state machine checks h1 first, so the line becomes h1. Paragraph is last. It is the default when nothing else matches.
+</div>
+
+<h3>B4. Where the reading format comes from (question 3)</h3>
+
+<p>The PDF pipeline uses <strong>the same <code>epubStylesheet</code></strong> as the web pipeline (see A4). The font, line height, padding, image rules, and code box are the same. The PDF work is different in one way: before CSS can style a paragraph, rebind must first decide <strong>where each paragraph starts and ends</strong>. A PDF has a hard line break at the end of every printed line. A Kindle screen has a different width, so those breaks must go.</p>
+
+<h4>Joining lines into paragraphs</h4>
+<p><code>collectParagraphLines</code> adds the next line to the current paragraph, but stops when one of these is true:</p>
+<table>
+  <thead><tr><th>Stop signal</th><th>Why it means "new paragraph"</th></tr></thead>
+  <tbody>
+    <tr><td>The previous line ends with <code>. ! ? :</code> and stops before the right margin</td><td>A short last line is how a printed paragraph ends.</td></tr>
+    <tr><td>The next line is indented and the previous one ended a sentence</td><td>Books indent the first line of a new paragraph.</td></tr>
+    <tr><td>The gap between lines is more than 1.6 × the normal pitch</td><td>Extra space means a new block.</td></tr>
+    <tr><td>The next line starts with a quote mark or a dash</td><td>In fiction, each line of dialogue is its own paragraph.</td></tr>
+    <tr><td>The next line looks like a heading, code, a list, or a caption</td><td>A different block type starts.</td></tr>
+  </tbody>
+</table>
+
+<p>Two repairs happen when the lines join:</p>
+<ul>
+  <li><strong>Hyphen fix.</strong> "inter-" at the end of a line plus "national" on the next line. Is the word "international" or "inter-national"? <code>Dehyphenate</code> checks the lexicon from step 4. If the book uses "international" more often, rebind joins it. If the book uses the hyphenated form, rebind keeps the hyphen.</li>
+  <li><strong>Page break fix.</strong> <code>mergeCrossPageParagraphs</code> joins the last paragraph of a page with the first paragraph of the next page. It does this if the first one does not end a sentence, or if the second one starts with a lowercase letter.</li>
+</ul>
+
+<h4>PDF-only style classes</h4>
+<p>These rules are in the shared stylesheet, but in practice only the PDF pipeline makes the matching HTML:</p>
+<table>
+  <thead><tr><th>Class</th><th>When rebind adds it</th><th>How it looks</th></tr></thead>
+  <tbody>
+    <tr><td><code>.dropcap</code></td><td>A paragraph starts with one big capital letter (a drop cap)</td><td>Letter floats left, 3.1× larger, bold</td></tr>
+    <tr><td><code>hr.scene-break</code></td><td>A line with only <code>* * *</code>, <code>~</code>, <code>§</code>, or similar</td><td>Centered <code>*   *   *</code>, no rule line</td></tr>
+    <tr><td><code>.table-wrap</code>, <code>.table-figure</code></td><td>Small tables become HTML, large tables become a PNG</td><td>Thin gray borders, scroll if too wide</td></tr>
+    <tr><td><code>.toc-chapter-num</code></td><td>"ONE", "TWO" lines on a contents page</td><td>Uppercase, wide letter spacing</td></tr>
+  </tbody>
+</table>
+
+<div class="note ok">
+  <b>Page links still work.</b> rebind puts an empty <code>&lt;div id="p12"&gt;</code> where page 12 starts. Links inside the PDF that point to a page (for example, from the contents page) are rewritten to <code>chapter_003.xhtml#p12</code>. So a tap on the contents page jumps to the right place.
+</div>
+
+<!-- ============================================================= -->
+<h2>Common confusions</h2>
+
+<div class="note warn">
+  <b>"The sanitizer is what removes ads."</b> Mostly not. Readability removes ads, menus, and comments, because it throws away whole page areas. The sanitizer works on the small details that remain, such as tags and attributes.
+</div>
+<div class="note warn">
+  <b>"rebind keeps the website's look."</b> No. rebind removes all site CSS and inline styles on purpose. Every book uses the same stylesheet. This is why the result looks the same on Kindle and Apple Books, and why dark mode works.
+</div>
+<div class="note warn">
+  <b>"pdftohtml converts the PDF to HTML for us."</b> Only in a basic way. rebind uses its <code>-xml</code> mode, which gives positioned text pieces and nothing more. All paragraphs, headings, code blocks, chapters, and figures come from rebind's own rules in <code>pdf_layout.go</code> and <code>pdf_statemachine.go</code>.
+</div>
+<div class="note warn">
+  <b>"Big text is always a heading."</b> Not always. A drop cap is big but is the first letter of a paragraph. A big line at the bottom of a page is not a heading. Sizes are compared to the median of <em>this</em> book. A 14-point line is a heading in a 10-point book, but body text in a 14-point book.
+</div>
+<div class="note warn">
+  <b>"Fiction vs technical profile changes the CSS."</b> No. The profile only changes detection. In the technical profile, lines that start with code words like <code>func</code> or <code>{</code> can start a code block. The stylesheet stays the same.
+</div>
+
+<!-- ============================================================= -->
+<h2>Recap</h2>
+
+<table>
+  <thead><tr><th>Question</th><th>Web URL</th><th>PDF file</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>1. Steps</strong></td>
+      <td>Detect → fetch → Readability → images → sanitize → package → fix TOC</td>
+      <td>Poppler XML → visual lines → remove noise → learn book → classify lines → images → chapters → package</td>
+    </tr>
+    <tr>
+      <td><strong>2. Hard part</strong></td>
+      <td><span class="tag red">remove</span> Readability drops whole areas; the sanitizer drops noise tags and keeps 14 safe attributes</td>
+      <td><span class="tag orange">rebuild</span> Font names → bold/italic/code; size vs median → headings; gaps and margins → paragraphs; caption gaps → diagrams</td>
+    </tr>
+    <tr>
+      <td><strong>3. Format</strong></td>
+      <td colspan="2">One shared <code>epubStylesheet</code>: book serif, <code>line-height 1.68</code>, all sizes in <code>em</code>, gray-only colors for dark mode, no images cut across pages. The PDF pipeline also decides where paragraphs start and adds drop caps, scene breaks, and page anchors.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>Next piece to explore:</strong> the <code>cmd/verify</code> tool and the <code>pdf-verify</code> skill. They show each PDF stage (XML, visual lines, blocks, XHTML) for one page. That is the best way to see these rules work on a real book.</p>
+
+<div class="foot">
+  rebind — internal explainer. Generated from the source in <code>internal/converter/</code>.
+</div>
+
+</div>
+
+<script>
+/* Tiny syntax highlighter — a plain tokenizer, not a real parser.
+   No dependencies, works offline from file://. Colors: strings/numbers/
+   booleans in blue, keywords bold, comments muted, function names amber.
+   Only <pre><code class="language-xxx"> blocks are processed. */
+document.querySelectorAll('pre code[class^="language-"]').forEach(function (el) {
+  var src = el.textContent;
+  var esc = function (s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+  var re = new RegExp([
+    '(\\/\\/[^\\n]*|#[^\\n]*|--[^\\n]*)',                          // 1 comments
+    '("(?:[^"\\\\]|\\\\.)*"|\'(?:[^\'\\\\]|\\\\.)*\'|`(?:[^`\\\\]|\\\\.)*`)', // 2 strings
+    '\\b(0x[0-9a-fA-F]+|\\d+(?:\\.\\d+)?(?:ms|s|%|px|rem|GiB|MiB|KB)?)\\b',              // 3 numbers
+    '\\b(true|false|null|None|True|False|null)\\b',                 // 4 literals
+    '\\b(async|await|def|class|return|if|else|elif|while|for|in|import|from|const|let|var|function|fn|pub|struct|impl|new|self|this|try|except|catch|finally|raise|throw|match|case|with|as|not|and|or|yield|type)\\b', // 5 keywords
+    '([A-Za-z_][\\w-]*)(?=\\()'                                    // 6 function names
+  ].join('|'), 'g');
+  var out = '', last = 0, m;
+  while ((m = re.exec(src)) !== null) {
+    if (m[0].length === 0) { re.lastIndex++; continue; }
+    out += esc(src.slice(last, m.index));
+    var cls = m[1] ? 'tok-com' : (m[2] || m[4]) ? 'tok-str' : m[3] ? 'tok-num' : m[5] ? 'tok-key' : 'tok-fn';
+    out += '<span class="' + cls + '">' + esc(m[0]) + '</span>';
+    last = m.index + m[0].length;
+  }
+  out += esc(src.slice(last));
+  el.innerHTML = out;
+});
+</script>
+</body>
+</html>
