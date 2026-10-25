@@ -1,19 +1,13 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
-
-	tea "github.com/charmbracelet/bubbletea"
 
 	"rebind/internal/converter"
-	"rebind/internal/tui"
 )
 
 func parsePageRange(s string) (int, int, error) {
@@ -92,15 +86,13 @@ func main() {
 		if flag.NArg() > 0 {
 			initialURL = flag.Arg(0)
 		}
-		p := tea.NewProgram(tui.NewModel(initialURL, defaultOutDir))
-		if _, err := p.Run(); err != nil {
+		if err := runInteractive(initialURL, defaultOutDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Error running rebind: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	// Headless mode
 	if flag.NArg() == 0 {
 		fmt.Fprintf(os.Stderr, "Error: headless conversion requires a URL or PDF file path argument\n")
 		flag.Usage()
@@ -108,42 +100,17 @@ func main() {
 	}
 	targetInput := flag.Arg(0)
 
-	opts := converter.ConvertOptions{
-		Profile:   converter.BookProfile(profileStr),
-		FirstPage: firstPage,
-		LastPage:  lastPage,
+	cfg := headlessConfig{
+		targetInput:   targetInput,
+		outTarget:     outTarget,
+		defaultOutDir: defaultOutDir,
+		profileStr:    profileStr,
+		firstPage:     firstPage,
+		lastPage:      lastPage,
 	}
 
-	if outTarget != "" {
-		if strings.HasSuffix(strings.ToLower(outTarget), ".epub") {
-			opts.OutputPath = outTarget
-			opts.OutputDir = filepath.Dir(outTarget)
-		} else {
-			opts.OutputDir = outTarget
-		}
-	} else {
-		opts.OutputDir = defaultOutDir
-	}
-
-	onProgress := func(ev converter.ProgressEvent) {
-		fmt.Fprintf(os.Stderr, "[Step %d/4] %s\n", ev.Step, ev.Message)
-	}
-
-	ctx := context.Background()
-	result, err := converter.ConvertWithOptions(ctx, targetInput, opts, onProgress)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nConversion failed: %v\n", err)
+	if err := runHeadless(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "\n%v\n", err)
 		os.Exit(1)
 	}
-
-	fmt.Printf("\nSuccessfully converted %q in %v\nOutput: %s\nChapters: %d | Pages: %d | Images: %d/%d | Profile: %s\n",
-		result.Title,
-		result.Duration.Round(time.Millisecond),
-		result.OutputPath,
-		result.Chapters,
-		result.PagesTotal,
-		result.ImagesSaved,
-		result.ImagesTotal,
-		result.ProfileUsed,
-	)
 }
